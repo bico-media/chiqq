@@ -1,6 +1,6 @@
 {
 	"name": "chiqq",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "High throughput async task pool / queue manager",
 	"main": "dist/index.js",
 	"author": "MWulff",
