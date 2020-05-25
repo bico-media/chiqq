@@ -2,7 +2,8 @@
 	"name": "chiqq",
 	"version": "0.1.1",
 	"description": "High throughput async task pool / queue manager",
-	"main": "dist/index.js",
+	"main": "dist/es5/index.js",
+	"module": "dist/es6/index.js",
 	"author": "MWulff",
 	"license": "MIT",
 	"repository": {
@@ -11,7 +12,9 @@
 	},
 	"scripts": {
 		"go": "ts-node index.ts",
-		"build": "tsc src/index.ts --target es6 --outDir dist/",
+		"build": "yarn build-es5 && yarn build-es6",
+		"build-es5":"tsc src/index.ts --target es5 --outDir dist/es5",
+		"build-es6":"tsc src/index.ts --target es6 --outDir dist/es6",
 		"prepublishOnly": "yarn build && yarn bump",
 		"bump": "yarn is-git-clean && bump --tag 'v%s'",
 		"is-git-clean": "(git diff --quiet --exit-code --cached && git diff --quiet --exit-code) || (echo Please commit or stash changes && exit 1)"
