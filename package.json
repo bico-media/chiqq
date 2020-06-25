@@ -1,6 +1,6 @@
 {
 	"name": "chiqq",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "High throughput async task pool / queue manager",
 	"main": "dist/es5/index.js",
 	"module": "dist/es6/index.js",
