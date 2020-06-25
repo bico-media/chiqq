@@ -65,7 +65,7 @@ export default class Chiqq {
 			} catch (e) {
 				this.running--;
 
-				if (conf.retryMax < 0 || payload.retries++ < conf.retryMax) {
+				if (conf.retryMax < 0 || payload.retried++ < conf.retryMax) {
 					setTimeout(() => {
 						this.q.unshift(payload);
 						this.tick();
