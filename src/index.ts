@@ -14,8 +14,8 @@ interface ConfigTask {
 }
 
 const delay = async (timeout: number) => {
-	return new Promise((resolve) => {
-		setTimeout(() => resolve(void), timeout);
+	return new Promise(resolve => {
+		setTimeout(() => resolve(null), timeout);
 	});
 };
 
@@ -36,7 +36,7 @@ export default class Chiqq {
 			chill: (conf.chill || 1) | 0,
 			retryMax: (conf.retryMax || 0) | 0,
 			retryCooling: (conf.retryCooling || 50) | 0,
-			retryFactor: (conf.retryFactor || 0) | 0,
+			retryFactor: (conf.retryFactor || 0) | 0
 		};
 		this.concurrency = (conf.concurrency || 1) | 0;
 		this.paused = !!conf.paused || false;
@@ -141,7 +141,7 @@ export default class Chiqq {
 			chill: this.conf.chill,
 			retryMax: this.conf.retryMax,
 			retryCooling: this.conf.retryMax,
-			retryFactor: this.conf.retryFactor,
+			retryFactor: this.conf.retryFactor
 		};
 	}
 }
