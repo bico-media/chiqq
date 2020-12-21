@@ -15,7 +15,7 @@ interface ConfigTask {
 
 const delay = async (timeout: number) => {
 	return new Promise((resolve) => {
-		setTimeout(() => resolve(), timeout);
+		setTimeout(() => resolve(void), timeout);
 	});
 };
 
