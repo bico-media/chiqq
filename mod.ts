@@ -1,1 +1,3 @@
-export * from './src/index.ts';
+import Chiqq from './src/index.ts';
+
+default export Chiqq
