@@ -6,13 +6,13 @@
 		"declaration": true,
 		"declarationMap": true,
 		"outDir": "./dist",
-		"rootDir": "./src",
 		"strict": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowSyntheticDefaultImports": true
 	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist"]
+	"include": ["src/**/*", "test/**/*", "types/**/*"],
+	"exclude": ["node_modules", "dist"],
+	"types": ["bun-types"]
 }
