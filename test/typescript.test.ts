@@ -1,27 +1,27 @@
-import {describe, it, expect} from 'bun:test';
-import Chiqq, {Configuration, ConfigTask} from '../src/index';
+import {describe, expect, it} from 'bun:test';
+import Chiqq, {type ConfigTask, type Configuration} from '../src/index';
 
 describe('Chiqq TypeScript Features', () => {
 	it('should support generic return types', async () => {
 		const stringQueue = new Chiqq({});
 
-		const stringResult = await stringQueue.add(async () => {
+		const stringResult = await stringQueue.add<string>(async () => {
 			return 'Hello TypeScript';
 		});
 
-		// TypeScript should infer this is string
-		const uppercased = (stringResult as string).toUpperCase();
+		// TypeScript infers string from the generic.
+		const uppercased = stringResult.toUpperCase();
 		expect(uppercased).toBe('HELLO TYPESCRIPT');
 	});
 
 	it('should support per-task type overrides', async () => {
 		const queue = new Chiqq({});
 
-		const numberResult = await queue.add(async () => {
+		const numberResult = await queue.add<number>(async () => {
 			return 42;
 		});
 
-		const doubled = (numberResult as number) * 2;
+		const doubled = numberResult * 2;
 		expect(doubled).toBe(84);
 	});
 
@@ -34,13 +34,13 @@ describe('Chiqq TypeScript Features', () => {
 
 		const queue = new Chiqq({});
 
-		const userResult = (await queue.add(async () => {
+		const userResult = await queue.add<UserData>(async () => {
 			return {
 				id: 123,
 				name: 'John Doe',
 				email: 'john@example.com',
 			};
-		})) as UserData;
+		});
 
 		expect(userResult.id).toBe(123);
 		expect(userResult.name).toBe('John Doe');
@@ -50,34 +50,39 @@ describe('Chiqq TypeScript Features', () => {
 	it('should export proper TypeScript interfaces', () => {
 		const config: Configuration = {
 			concurrency: 3,
-			chill: 100,
+			taskDelay: 100,
 			retryMax: 2,
 		};
 
 		const taskConfig: ConfigTask = {
 			addAsFirst: true,
-			chill: 50,
+			taskDelay: 50,
 		};
 
 		const queue = new Chiqq(config);
-		const insight = queue.insight();
+		const status = queue.status();
 
-		expect(insight.concurrency).toBe(3);
-		expect(insight.chill).toBe(100);
-		expect(insight.retryMax).toBe(2);
+		expect(status.config.concurrency).toBe(3);
+		expect(status.config.taskDelay).toBe(100);
+		expect(status.config.retry.max).toBe(2);
+
+		// Exercise the ConfigTask shape so the variable isn't unused
+		// and so the per-task type-checks at the call site.
+		expect(taskConfig.addAsFirst).toBe(true);
+		expect(taskConfig.taskDelay).toBe(50);
 	});
 
 	it('should maintain type safety with mixed return types', async () => {
 		const queue = new Chiqq({});
 
 		// String task
-		const stringTask = queue.add(async () => 'string result');
+		const stringTask = queue.add<string>(async () => 'string result');
 
 		// Number task
-		const numberTask = queue.add(async () => 123);
+		const numberTask = queue.add<number>(async () => 123);
 
 		// Boolean task
-		const booleanTask = queue.add(async () => true);
+		const booleanTask = queue.add<boolean>(async () => true);
 
 		const [str, num, bool] = await Promise.all([stringTask, numberTask, booleanTask]);
 
@@ -94,7 +99,7 @@ describe('Chiqq TypeScript Features', () => {
 	it('should handle array return types', async () => {
 		const queue = new Chiqq({});
 
-		const arrayResult = await queue.add(async () => {
+		const arrayResult = await queue.add<number[]>(async () => {
 			return [1, 2, 3, 4, 5];
 		});
 
@@ -105,7 +110,7 @@ describe('Chiqq TypeScript Features', () => {
 	it('should handle Promise return types', async () => {
 		const queue = new Chiqq({});
 
-		const promiseResult = await queue.add(async () => {
+		const promiseResult = await queue.add<string>(async () => {
 			const innerPromise = Promise.resolve('nested promise');
 			return await innerPromise;
 		});

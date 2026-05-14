@@ -1,4 +1,4 @@
-import {describe, it, expect, beforeEach} from 'bun:test';
+import {describe, expect, it} from 'bun:test';
 import Chiqq from '../src/index';
 
 describe('Chiqq Concurrency Control', () => {
@@ -23,9 +23,9 @@ describe('Chiqq Concurrency Control', () => {
 
 	it('should respect concurrency setting', async () => {
 		const queue = new Chiqq({concurrency: 3});
-		const insight = queue.insight();
+		const status = queue.status();
 
-		expect(insight.concurrency).toBe(3);
+		expect(status.config.concurrency).toBe(3);
 
 		// Add tasks and verify concurrency is respected
 		const runningTasks: Promise<string>[] = [];
@@ -47,12 +47,12 @@ describe('Chiqq Concurrency Control', () => {
 		const results = await Promise.all(runningTasks);
 
 		// Verify no task reported more than 3 concurrent executions
-		const maxConcurrentReported = Math.max(...results.map(r => parseInt(r.split(': ')[1])));
+		const maxConcurrentReported = Math.max(...results.map(r => parseInt(r.split(': ')[1], 10)));
 		expect(maxConcurrentReported).toBeLessThanOrEqual(3);
 	});
 
-	it('should handle zero chill (no delay)', async () => {
-		const queue = new Chiqq({chill: 0, concurrency: 2});
+	it('should handle zero taskDelay (no delay)', async () => {
+		const queue = new Chiqq({taskDelay: 0, concurrency: 2});
 		const startTime = Date.now();
 
 		const task = async () => {
@@ -66,21 +66,21 @@ describe('Chiqq Concurrency Control', () => {
 		const endTime = Date.now();
 		const duration = endTime - startTime;
 
-		// Should complete quickly without chill delays
+		// Should complete quickly without taskDelay delays
 		expect(duration).toBeLessThan(100);
 	});
 
-	it('should respect chill delays between tasks', async () => {
-		const queue = new Chiqq({chill: 50, concurrency: 2});
+	it('should respect taskDelay between tasks', async () => {
+		const queue = new Chiqq({taskDelay: 50, concurrency: 2});
 		const startTime = Date.now();
 
-		// Create tasks that run longer to ensure overlap for chill to take effect
+		// Create tasks that run longer to ensure overlap for taskDelay to take effect
 		const longTask = async () => {
 			await new Promise(resolve => setTimeout(resolve, 30));
 			return 'slow';
 		};
 
-		// Add tasks that will overlap, triggering chill behavior
+		// Add tasks that will overlap, triggering taskDelay behavior
 		const promises = [queue.add(longTask), queue.add(longTask), queue.add(longTask)];
 
 		await Promise.all(promises);
@@ -88,7 +88,7 @@ describe('Chiqq Concurrency Control', () => {
 		const endTime = Date.now();
 		const duration = endTime - startTime;
 
-		// Should include some chill delays due to task overlap
+		// Should include some taskDelay delays due to task overlap
 		expect(duration).toBeGreaterThan(80);
 	});
 });

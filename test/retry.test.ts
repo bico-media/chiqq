@@ -1,4 +1,4 @@
-import {describe, it, expect, beforeEach} from 'bun:test';
+import {describe, expect, it} from 'bun:test';
 import Chiqq from '../src/index';
 
 describe('Chiqq Retry Mechanism', () => {
@@ -71,7 +71,7 @@ describe('Chiqq Retry Mechanism', () => {
 		const queue = new Chiqq({
 			retryMax: 2,
 			retryCooling: 50,
-			retryFactor: 1,
+			retryFactor: 2,
 		});
 		const startTime = Date.now();
 		let attemptCount = 0;
@@ -90,8 +90,26 @@ describe('Chiqq Retry Mechanism', () => {
 
 		expect(result).toBe('success');
 		expect(attemptCount).toBe(3);
-		// Should include increasing delays: 50ms + 100ms
+		// Exponential: retry 1 = 50ms, retry 2 = 100ms (total ~150ms).
 		expect(duration).toBeGreaterThan(140);
+	});
+
+	it('uses constant cooling when retryFactor <= 1', async () => {
+		const queue = new Chiqq({retryMax: 2, retryCooling: 40, retryFactor: 0});
+		const start = Date.now();
+		let attempts = 0;
+
+		await queue.add(async () => {
+			attempts++;
+			if (attempts < 3) throw new Error('fail');
+			return 'ok';
+		});
+
+		const duration = Date.now() - start;
+		expect(attempts).toBe(3);
+		// Two retries at constant 40ms each = ~80ms. Should NOT exceed exponential ~120ms.
+		expect(duration).toBeGreaterThanOrEqual(70);
+		expect(duration).toBeLessThan(150);
 	});
 
 	it('should allow per-task retry configuration override', async () => {

@@ -1,6 +1,6 @@
 export interface Configuration {
 	concurrency?: number;
-	chill?: number;
+	taskDelay?: number;
 	paused?: boolean;
 	retryMax?: number;
 	retryCooling?: number;
@@ -8,143 +8,253 @@ export interface Configuration {
 }
 
 export interface ConfigTask {
-	chill?: number;
+	taskDelay?: number;
+	retryMax?: number;
 	retryCooling?: number;
+	retryFactor?: number;
 	addAsFirst?: boolean;
 }
 
-const delay = async (timeout: number) => {
-	return new Promise(resolve => {
-		setTimeout(() => resolve(null), timeout);
-	});
-};
+interface ResolvedConfig {
+	taskDelay: number;
+	retryMax: number;
+	retryCooling: number;
+	retryFactor: number;
+}
+
+interface QueueItem<T = unknown> {
+	task: () => T | Promise<T>;
+	resolve: (value: T) => void;
+	reject: (reason?: unknown) => void;
+	retried: number;
+	conf: ResolvedConfig;
+}
+
+interface PendingRetryEntry {
+	payload: QueueItem;
+	timer: ReturnType<typeof setTimeout>;
+}
+
+export class ChiqqClearedError extends Error {
+	constructor(message = 'Chiqq queue cleared') {
+		super(message);
+		this.name = 'ChiqqClearedError';
+	}
+}
 
 export default class Chiqq {
 	concurrency: number;
-	conf: {
-		retryMax: number;
-		retryCooling: number;
-		retryFactor: number;
-		chill: number;
-	};
+	conf: ResolvedConfig;
 	running: number;
 	paused: boolean;
-	q: any;
+	q: QueueItem[];
+	pauseCallback: (() => void) | null;
+	completeCallback: (() => void) | null;
+	pendingRetry: Set<PendingRetryEntry>;
 
-	constructor(conf: Configuration) {
+	constructor(conf: Configuration = {}) {
 		this.conf = {
-			chill: (conf.chill || 1) | 0,
-			retryMax: (conf.retryMax || 0) | 0,
-			retryCooling: (conf.retryCooling || 50) | 0,
-			retryFactor: (conf.retryFactor || 0) | 0,
+			taskDelay: conf.taskDelay !== undefined ? Math.max(0, conf.taskDelay | 0) : 0,
+			retryMax: conf.retryMax !== undefined ? conf.retryMax | 0 : 0,
+			retryCooling: conf.retryCooling !== undefined ? Math.max(0, conf.retryCooling | 0) : 50,
+			retryFactor: conf.retryFactor !== undefined ? Math.max(0, conf.retryFactor | 0) : 0,
 		};
-		this.concurrency = (conf.concurrency || 1) | 0;
-		this.paused = !!conf.paused || false;
+		this.concurrency = Math.max(1, (conf.concurrency || 1) | 0);
+		this.paused = !!conf.paused;
 		this.running = 0;
 		this.q = [];
+		this.pauseCallback = null;
+		this.completeCallback = null;
+		this.pendingRetry = new Set();
 	}
 
-	async tick() {
-		if (this.paused) return;
+	private retryDelay(conf: ResolvedConfig, attempt: number): number {
+		// attempt is 1-indexed (1 = first retry).
+		// factor <= 1: constant cooling. factor > 1: exponential (cooling * factor^(attempt-1)).
+		if (conf.retryFactor <= 1) return conf.retryCooling;
+		return conf.retryCooling * conf.retryFactor ** (attempt - 1);
+	}
 
-		if (this.concurrency <= this.running) return;
-
-		const payload = this.q.shift();
-
-		if (!payload) return;
-
-		this.running++;
-
-		let conf = {...this.conf, ...payload.conf};
-
-		const run = async () => {
-			let result;
-
-			try {
-				result = await payload.task();
-			} catch (e) {
-				this.running--;
-
-				if (conf.retryMax < 0 || payload.retried++ < conf.retryMax) {
-					setTimeout(
-						() => {
-							this.q.unshift(payload);
-							this.tick();
-						},
-						conf.retryCooling + conf.retryCooling * conf.retryFactor
-					);
-				} else {
-					payload.reject(e);
-				}
-				return this.next();
-			}
-
-			this.running--;
-
-			payload.resolve(result);
-
-			return this.next(conf);
-		};
-
-		if (conf.chill) {
-			Promise.resolve(setTimeout(() => run(), 0));
-		} else {
-			Promise.resolve(run());
+	private postTaskCheck() {
+		if (this.pauseCallback && this.paused && this.running === 0) {
+			const cb = this.pauseCallback;
+			this.pauseCallback = null;
+			cb();
+		}
+		if (
+			this.completeCallback &&
+			this.running === 0 &&
+			this.q.length === 0 &&
+			this.pendingRetry.size === 0
+		) {
+			const cb = this.completeCallback;
+			this.completeCallback = null;
+			cb();
 		}
 	}
 
-	add(task: () => any, configObj: ConfigTask = {}) {
+	private tick() {
+		if (this.paused) return;
+		if (this.concurrency <= this.running) return;
+
+		const payload = this.q.shift();
+		if (!payload) return;
+
+		this.running++;
+		const conf = payload.conf;
+
+		const run = async () => {
+			try {
+				const result = await payload.task();
+				this.running--;
+				payload.resolve(result);
+				this.postTaskCheck();
+				this.next(conf);
+			} catch (e) {
+				this.running--;
+
+				if (conf.retryMax < 0 || payload.retried < conf.retryMax) {
+					payload.retried++;
+					const wait = this.retryDelay(conf, payload.retried);
+					const entry: PendingRetryEntry = {payload, timer: undefined as never};
+					entry.timer = setTimeout(() => {
+						this.pendingRetry.delete(entry);
+						this.q.unshift(payload);
+						this.tick();
+					}, wait);
+					this.pendingRetry.add(entry);
+					this.postTaskCheck();
+					this.next(conf);
+					return;
+				}
+
+				payload.reject(e);
+				this.postTaskCheck();
+				this.next(conf);
+			}
+		};
+
+		if (conf.taskDelay) {
+			setTimeout(run, 0);
+		} else {
+			run();
+		}
+	}
+
+	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
-		return new Promise(async (resolve, reject) => {
-			let conf = {...this.conf, ...configObj};
-
-			if (conf.addAsFirst) {
-				this.q.unshift({task, resolve, reject, retried: 0, conf});
+		const conf: ResolvedConfig = {...this.conf, ...configObj};
+		return new Promise<T>((resolve, reject) => {
+			const item: QueueItem<T> = {task, resolve, reject, retried: 0, conf};
+			if (configObj.addAsFirst) {
+				this.q.unshift(item as QueueItem);
 			} else {
-				this.q.push({task, resolve, reject, retried: 0, conf});
+				this.q.push(item as QueueItem);
 			}
 
-			if (conf.chill && this.running) {
-				await delay(conf.chill * this.running);
+			if (conf.taskDelay && this.running) {
+				setTimeout(() => this.tick(), conf.taskDelay * this.running);
+			} else {
+				this.tick();
 			}
-
-			this.tick();
 		});
 	}
 
-	pause() {
+	/**
+	 * Adds a task at the front of the queue so it runs as soon as a slot is
+	 * available, ahead of any tasks added before it. Thin proxy over `add()`
+	 * with `addAsFirst: true`.
+	 */
+	addNext<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
+		return this.add<T>(task, {...configObj, addAsFirst: true});
+	}
+
+	pause(callback?: () => void) {
 		this.paused = true;
+		this.pauseCallback = callback || null;
+		// If already idle, fire on a microtask so behavior is consistent.
+		if (callback && this.running === 0) {
+			this.pauseCallback = null;
+			Promise.resolve().then(callback);
+		}
 	}
 
 	resume() {
 		this.paused = false;
-
+		this.pauseCallback = null;
 		while (this.q.length && this.running < this.concurrency) {
 			this.tick();
 		}
 	}
 
-	next(configObj: ConfigTask = {}) {
-		let conf = {...this.conf, ...configObj};
+	/**
+	 * Removes all queued and pending-retry tasks. Currently running tasks
+	 * are not affected.
+	 *
+	 * - `clear()` / `clear(false)` (default): cleared tasks reject with a
+	 *   `ChiqqClearedError`.
+	 * - `clear(true)`: cleared tasks resolve with `null`. Use this when you
+	 *   want to discard the work and don't care about results, so awaited
+	 *   promises don't reject.
+	 *
+	 * Returns the number of tasks cleared.
+	 */
+	clear(silent = false): number {
+		const queued = this.q.splice(0, this.q.length);
+		const retries = Array.from(this.pendingRetry);
+		this.pendingRetry.clear();
+		for (const entry of retries) clearTimeout(entry.timer);
 
-		if (conf.chill && this.running) {
-			return setTimeout(() => {
-				this.tick();
-			}, conf.chill);
+		const all = [...queued, ...retries.map(e => e.payload)];
+		for (const item of all) {
+			if (silent) {
+				item.resolve(null as never);
+			} else {
+				item.reject(new ChiqqClearedError());
+			}
 		}
-		return this.tick();
+
+		this.postTaskCheck();
+		return all.length;
 	}
 
-	insight() {
+	/**
+	 * Registers a one-shot callback that fires the next time the queue
+	 * transitions to drained (no running tasks, no queued tasks, no pending
+	 * retries) as a result of a task completing or being cleared. If the
+	 * queue is already idle the callback waits for the next drain.
+	 * Calling onComplete again before the callback fires replaces it.
+	 */
+	onComplete(callback: () => void) {
+		this.completeCallback = callback;
+	}
+
+	private next(configObj: ConfigTask = {}) {
+		const conf = {...this.conf, ...configObj};
+		if (conf.taskDelay && this.running) {
+			setTimeout(() => this.tick(), conf.taskDelay);
+			return;
+		}
+		this.tick();
+	}
+
+	status() {
 		return {
-			concurrency: this.concurrency,
-			paused: this.paused,
-			qLength: this.q.length,
-			running: this.running,
-			chill: this.conf.chill,
-			retryMax: this.conf.retryMax,
-			retryCooling: this.conf.retryCooling,
-			retryFactor: this.conf.retryFactor,
+			isPaused: this.paused,
+			config: {
+				concurrency: this.concurrency,
+				taskDelay: this.conf.taskDelay,
+				retry: {
+					max: this.conf.retryMax,
+					cooling: this.conf.retryCooling,
+					factor: this.conf.retryFactor,
+				},
+			},
+			tasks: {
+				total: this.q.length + this.running + this.pendingRetry.size,
+				active: this.running,
+				queued: this.q.length + this.pendingRetry.size,
+			},
 		};
 	}
 }
