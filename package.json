@@ -1,6 +1,6 @@
 {
 	"name": "chiqq",
-	"version": "2.1.2",
+	"version": "2.2.0",
 	"description": "Bulk load your async tasks to queue them with concurrency control and retry logic",
 	"author": "Mathias Wulff",
 	"license": "MIT",
@@ -29,9 +29,9 @@
 		"format": "biome format --write",
 		"test-format": "biome format",
 		"test": "bun test",
-		"#preversion": "yarn && yarn test && npm login",
-		"#release": "yarn version",
-		"#postversion": "npm publish && git push && git push --tags && echo \"Successfully released version $npm_package_version\""
+		"preversion": "yarn test && yarn build # && npm login",
+		"release": "yarn version",
+		"postversion": "npm publish && git push && git push --tags && echo \"Successfully released version $npm_package_version\""
 	},
 	"keywords": [
 		"queue",
