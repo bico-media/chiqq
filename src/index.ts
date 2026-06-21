@@ -195,7 +195,10 @@ export default class Chiqq {
 	 */
 	setConcurrency(concurrency: number) {
 		this.concurrency = Math.max(1, concurrency | 0);
-		this.resume();
+		let diff = this.concurrency - this.running;
+		while (0 < diff--) {
+			this.tick();
+		}
 	}
 
 	/**
