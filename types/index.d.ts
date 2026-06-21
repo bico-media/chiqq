@@ -56,6 +56,13 @@ export default class Chiqq {
     pause(callback?: () => void): void;
     resume(): void;
     /**
+     * Updates the concurrency limit and immediately attempts to utilize the new capacity.
+     * If the new limit is higher than the current running tasks, additional tasks will be started.
+     * If the new limit is lower, no running tasks are interrupted - the limit will take effect
+     * as tasks complete naturally.
+     */
+    setConcurrency(concurrency: number): void;
+    /**
      * Removes all queued and pending-retry tasks. Currently running tasks
      * are not affected.
      *

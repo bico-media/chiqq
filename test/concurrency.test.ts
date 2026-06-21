@@ -91,4 +91,86 @@ describe('Chiqq Concurrency Control', () => {
 		// Should include some taskDelay delays due to task overlap
 		expect(duration).toBeGreaterThan(80);
 	});
+
+	it('should update concurrency and utilize new capacity', async () => {
+		const queue = new Chiqq({concurrency: 1});
+		let runningCount = 0;
+		let maxRunning = 0;
+
+		const createTask = (id: number) => async () => {
+			runningCount++;
+			maxRunning = Math.max(maxRunning, runningCount);
+			await new Promise(resolve => setTimeout(resolve, 50));
+			runningCount--;
+			return `Task ${id}`;
+		};
+
+		// Add initial task
+		const initialTask = queue.add(createTask(1));
+		await new Promise(resolve => setTimeout(resolve, 10)); // Let it start
+
+		// Add more tasks while first is running
+		const additionalTasks = [
+			queue.add(createTask(2)),
+			queue.add(createTask(3)),
+			queue.add(createTask(4))
+		];
+
+		// Increase concurrency to 3
+		queue.setConcurrency(3);
+
+		// Wait for all tasks to complete
+		await Promise.all([initialTask, ...additionalTasks]);
+
+		// Should have utilized the increased concurrency
+		expect(maxRunning).toBeLessThanOrEqual(3);
+		expect(maxRunning).toBeGreaterThan(1); // Should have used more than original concurrency
+	});
+
+	it('should validate concurrency input and clamp to minimum 1', async () => {
+		const queue = new Chiqq({concurrency: 2});
+		
+		queue.setConcurrency(0);
+		expect(queue.concurrency).toBe(1);
+		
+		queue.setConcurrency(-5);
+		expect(queue.concurrency).toBe(1);
+		
+		queue.setConcurrency(3.7);
+		expect(queue.concurrency).toBe(3);
+	});
+
+	it('should handle decreasing concurrency without interrupting running tasks', async () => {
+		const queue = new Chiqq({concurrency: 3});
+		const startedTasks: number[] = [];
+
+		const createTask = (id: number) => async () => {
+			startedTasks.push(id);
+			await new Promise(resolve => setTimeout(resolve, 50));
+			return `Task ${id}`;
+		};
+
+		// Add tasks that will start immediately
+		const tasks = [
+			queue.add(createTask(1)),
+			queue.add(createTask(2)),
+			queue.add(createTask(3))
+		];
+
+		await new Promise(resolve => setTimeout(resolve, 10)); // Let tasks start
+
+		// Decrease concurrency to 1
+		queue.setConcurrency(1);
+
+		// Add more tasks
+		const additionalTasks = [
+			queue.add(createTask(4)),
+			queue.add(createTask(5))
+		];
+
+		await Promise.all([...tasks, ...additionalTasks]);
+
+		// First 3 tasks should have started before concurrency decrease
+		expect(startedTasks.slice(0, 3)).toEqual(expect.arrayContaining([1, 2, 3]));
+	});
 });
