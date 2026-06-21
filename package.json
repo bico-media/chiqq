@@ -1,6 +1,6 @@
 {
 	"name": "chiqq",
-	"version": "2.1.1",
+	"version": "2.1.2",
 	"description": "Bulk load your async tasks to queue them with concurrency control and retry logic",
 	"author": "Mathias Wulff",
 	"license": "MIT",
