@@ -42,6 +42,7 @@ export default class Chiqq {
     pauseCallback: (() => void) | null;
     completeCallback: (() => void) | null;
     pendingRetry: Set<PendingRetryEntry>;
+    chained: Chiqq | null;
     constructor(conf?: Configuration);
     private retryDelay;
     private postTaskCheck;
@@ -55,6 +56,16 @@ export default class Chiqq {
     addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
     pause(callback?: () => void): void;
     resume(): void;
+    /**
+     * Links a lower-priority follower queue. While this queue has work it holds
+     * the chained queue paused; when this queue goes idle it resumes the chained
+     * queue, forming a longer prioritised queue. Pause/resume signals cascade
+     * forward through the chain, even across empty links. Links are forward-only
+     * (a chained queue has no reference to its upstream); the developer should
+     * resume only the top of the chain. Returns the chained queue so links can be
+     * built fluently: `a.chain(b).chain(c)` builds `a -> b -> c`.
+     */
+    chain(queue: Chiqq): Chiqq;
     /**
      * Updates the concurrency limit and immediately attempts to utilize the new capacity.
      * If the new limit is higher than the current running tasks, additional tasks will be started.

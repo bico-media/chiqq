@@ -15,6 +15,7 @@ class Chiqq {
 	pauseCallback;
 	completeCallback;
 	pendingRetry;
+	chained;
 	constructor(conf = {}) {
 		this.conf = {
 			taskDelay: conf.taskDelay !== undefined ? Math.max(0, conf.taskDelay | 0) : 0,
@@ -29,6 +30,7 @@ class Chiqq {
 		this.pauseCallback = null;
 		this.completeCallback = null;
 		this.pendingRetry = new Set;
+		this.chained = null;
 	}
 	retryDelay(conf, attempt) {
 		if (conf.retryFactor <= 1)
@@ -46,6 +48,9 @@ class Chiqq {
 			this.completeCallback = null;
 			cb();
 		}
+		if (!this.paused && this.running === 0 && this.q.length === 0) {
+			this.chained?.resume();
+		}
 	}
 	tick() {
 		if (this.paused)
@@ -55,6 +60,7 @@ class Chiqq {
 		const payload = this.q.shift();
 		if (!payload)
 			return;
+		this.chained?.pause();
 		this.running++;
 		const conf = payload.conf;
 		const run = async () => {
@@ -115,6 +121,7 @@ class Chiqq {
 	pause(callback) {
 		this.paused = true;
 		this.pauseCallback = callback || null;
+		this.chained?.pause();
 		if (callback && this.running === 0) {
 			this.pauseCallback = null;
 			Promise.resolve().then(callback);
@@ -124,6 +131,20 @@ class Chiqq {
 		this.paused = false;
 		this.pauseCallback = null;
 		while (this.q.length && this.running < this.concurrency) {
+			this.tick();
+		}
+		if (this.running === 0 && this.q.length === 0) {
+			this.chained?.resume();
+		}
+	}
+	chain(queue) {
+		this.chained = queue;
+		return queue;
+	}
+	setConcurrency(concurrency) {
+		this.concurrency = Math.max(1, concurrency | 0);
+		let diff = this.concurrency - this.running;
+		while (0 < diff--) {
 			this.tick();
 		}
 	}

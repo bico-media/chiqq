@@ -51,6 +51,7 @@ export default class Chiqq {
 	pauseCallback: (() => void) | null;
 	completeCallback: (() => void) | null;
 	pendingRetry: Set<PendingRetryEntry>;
+	chained: Chiqq | null;
 
 	constructor(conf: Configuration = {}) {
 		this.conf = {
@@ -66,6 +67,7 @@ export default class Chiqq {
 		this.pauseCallback = null;
 		this.completeCallback = null;
 		this.pendingRetry = new Set();
+		this.chained = null;
 	}
 
 	private retryDelay(conf: ResolvedConfig, attempt: number): number {
@@ -91,6 +93,12 @@ export default class Chiqq {
 			this.completeCallback = null;
 			cb();
 		}
+		// Chain handoff: when not paused and fully idle (pending retries do not
+		// count), resume the chained queue. The !paused guard is essential so a
+		// paused queue draining its in-flight task does not wake the chain.
+		if (!this.paused && this.running === 0 && this.q.length === 0) {
+			this.chained?.resume();
+		}
 	}
 
 	private tick() {
@@ -99,6 +107,9 @@ export default class Chiqq {
 
 		const payload = this.q.shift();
 		if (!payload) return;
+
+		// I have work, so hold my chained queue (cascades down through empty links).
+		this.chained?.pause();
 
 		this.running++;
 		const conf = payload.conf;
@@ -172,6 +183,8 @@ export default class Chiqq {
 	pause(callback?: () => void) {
 		this.paused = true;
 		this.pauseCallback = callback || null;
+		// Propagate the pause down the chain (cascades through empty links).
+		this.chained?.pause();
 		// If already idle, fire on a microtask so behavior is consistent.
 		if (callback && this.running === 0) {
 			this.pauseCallback = null;
@@ -185,6 +198,25 @@ export default class Chiqq {
 		while (this.q.length && this.running < this.concurrency) {
 			this.tick();
 		}
+		// If I was resumed but have nothing to run, pass the baton forward so
+		// the chain flows past empty links instead of stalling here.
+		if (this.running === 0 && this.q.length === 0) {
+			this.chained?.resume();
+		}
+	}
+
+	/**
+	 * Links a lower-priority follower queue. While this queue has work it holds
+	 * the chained queue paused; when this queue goes idle it resumes the chained
+	 * queue, forming a longer prioritised queue. Pause/resume signals cascade
+	 * forward through the chain, even across empty links. Links are forward-only
+	 * (a chained queue has no reference to its upstream); the developer should
+	 * resume only the top of the chain. Returns the chained queue so links can be
+	 * built fluently: `a.chain(b).chain(c)` builds `a -> b -> c`.
+	 */
+	chain(queue: Chiqq): Chiqq {
+		this.chained = queue;
+		return queue;
 	}
 
 	/**

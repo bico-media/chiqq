@@ -120,6 +120,32 @@ console.log(`Cancelled ${cancelled} pending tasks`);
 q.clear(true);
 ```
 
+## Priority Chains
+
+`chain()` links a lower-priority follower queue, letting you compose several queues into one longer prioritised pipeline. A queue holds its chained queue paused while it has work, and resumes it once it goes idle - so everything in the upstream queue finishes before the downstream queue gets a turn.
+
+```typescript
+const high = new Chiqq({ concurrency: 4 });
+const low = new Chiqq({ concurrency: 4 });
+
+high.chain(low);
+
+// While `high` has work, `low` is held. As soon as `high` drains, `low` runs.
+high.add(() => urgentWork());
+low.add(() => backgroundWork()); // waits for `high` to finish first
+```
+
+Links are **forward-only** and compose to any depth. `chain()` returns the chained queue, so you can build a pipeline fluently:
+
+```typescript
+a.chain(b).chain(c).chain(d); // priority order: a -> b -> c -> d
+```
+
+Key behaviours:
+- When work arrives in an upstream queue, it pauses all downstream queues. In-flight tasks will finish n the downstream queues. Notice how concurrency is maintained within each queue and NOT across all queues.
+- **Retries don't block the chain:** a task waiting out its retry cooldown does not hold the chain - the downstream runs during the gap and is paused again when the retry fires.
+-Signals flow downward, so resume the top of the chain will flow down to the first chain with tasks. Resuming a middle queue will start tasks or propegate the resume as if it was the top of the chain. 
+
 ## API Reference
 
 ### `new Chiqq(config?)`
@@ -152,6 +178,10 @@ Pauses queue processing. Currently running tasks will complete; no new tasks sta
 ### `resume()`
 
 Resumes a paused queue, immediately seeks to fill the concurency pool of active tasks. 
+
+### `chain(queue) => Chiqq object`
+
+Links `queue` as a lower-priority follower of this queue (see [Priority Chains](#priority-chains)). While this queue has work the chained queue is held paused; when this queue goes idle the chained queue resumes. Returns the chained queue, so links can be built fluently: `a.chain(b).chain(c)`.
 
 ### `clear(silent?: boolean) => number`
 
