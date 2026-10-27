@@ -137,6 +137,7 @@ export default class Chiqq {
 	q: TaskQueue<QueueItem>;
 	pauseCallback: (() => void) | null;
 	completeCallback: (() => void) | null;
+	idleWaiters: (() => void)[];
 	pendingRetry: Set<PendingRetryEntry>;
 	chained: Chiqq | null;
 	lastStart: number;
@@ -151,6 +152,7 @@ export default class Chiqq {
 		this.q = new TaskQueue<QueueItem>();
 		this.pauseCallback = null;
 		this.completeCallback = null;
+		this.idleWaiters = [];
 		this.pendingRetry = new Set();
 		this.chained = null;
 		this.lastStart = 0;
@@ -164,21 +166,27 @@ export default class Chiqq {
 		return toDelay(conf.retryCooling * conf.retryFactor ** (attempt - 1));
 	}
 
+	private isDrained(): boolean {
+		return this.running === 0 && this.q.length === 0 && this.pendingRetry.size === 0;
+	}
+
 	private postTaskCheck() {
 		if (this.pauseCallback && this.paused && this.running === 0) {
 			const cb = this.pauseCallback;
 			this.pauseCallback = null;
 			cb();
 		}
-		if (
-			this.completeCallback &&
-			this.running === 0 &&
-			this.q.length === 0 &&
-			this.pendingRetry.size === 0
-		) {
-			const cb = this.completeCallback;
-			this.completeCallback = null;
-			cb();
+		if (this.isDrained()) {
+			if (this.completeCallback) {
+				const cb = this.completeCallback;
+				this.completeCallback = null;
+				cb();
+			}
+			if (this.idleWaiters.length) {
+				const waiters = this.idleWaiters;
+				this.idleWaiters = [];
+				for (const resolve of waiters) resolve();
+			}
 		}
 		// Chain handoff: when runnable and fully idle (pending retries do not
 		// count), release the chained queue. The paused/held guard is essential so
@@ -381,6 +389,16 @@ export default class Chiqq {
 	 */
 	onComplete(callback: () => void) {
 		this.completeCallback = callback;
+	}
+
+	/**
+	 * Returns a promise that resolves once the queue is drained (no running
+	 * tasks, no queued tasks, no pending retries). Resolves right away if the
+	 * queue is already idle. A paused queue with queued tasks is not idle.
+	 */
+	onIdle(): Promise<void> {
+		if (this.isDrained()) return Promise.resolve();
+		return new Promise(resolve => this.idleWaiters.push(resolve));
 	}
 
 	status() {
