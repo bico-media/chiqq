@@ -89,6 +89,40 @@ export class ChiqqClearedError extends Error {
 	}
 }
 
+// setTimeout fires immediately for delays above this.
+const MAX_DELAY = 2 ** 31 - 1;
+
+const DEFAULTS: ResolvedConfig = {taskDelay: 0, retryMax: 0, retryCooling: 50, retryFactor: 0};
+
+function toNumber(value: unknown, fallback: number): number {
+	if (value === undefined || value === null) return fallback;
+	const n = Number(value);
+	return Number.isNaN(n) ? fallback : n;
+}
+
+const toDelay = (value: number) => Math.min(MAX_DELAY, Math.max(0, value));
+
+function toConcurrency(value: unknown): number {
+	return Math.max(1, Math.floor(toNumber(value, 1)));
+}
+
+function resolveConfig(conf: ConfigTask, base: ResolvedConfig): ResolvedConfig {
+	const retryMax = Math.floor(toNumber(conf.retryMax, base.retryMax));
+	return {
+		taskDelay: toDelay(toNumber(conf.taskDelay, base.taskDelay)),
+		// -1 = retry forever; Infinity and any negative value mean the same.
+		retryMax: retryMax < 0 || retryMax === Number.POSITIVE_INFINITY ? -1 : retryMax,
+		retryCooling: toDelay(toNumber(conf.retryCooling, base.retryCooling)),
+		retryFactor: Math.max(0, toNumber(conf.retryFactor, base.retryFactor)),
+	};
+}
+
+const hasOverrides = (conf: ConfigTask) =>
+	conf.taskDelay !== undefined ||
+	conf.retryMax !== undefined ||
+	conf.retryCooling !== undefined ||
+	conf.retryFactor !== undefined;
+
 export default class Chiqq {
 	concurrency: number;
 	conf: ResolvedConfig;
@@ -101,13 +135,8 @@ export default class Chiqq {
 	chained: Chiqq | null;
 
 	constructor(conf: Configuration = {}) {
-		this.conf = {
-			taskDelay: conf.taskDelay !== undefined ? Math.max(0, conf.taskDelay | 0) : 0,
-			retryMax: conf.retryMax !== undefined ? conf.retryMax | 0 : 0,
-			retryCooling: conf.retryCooling !== undefined ? Math.max(0, conf.retryCooling | 0) : 50,
-			retryFactor: conf.retryFactor !== undefined ? Math.max(0, conf.retryFactor | 0) : 0,
-		};
-		this.concurrency = Math.max(1, (conf.concurrency || 1) | 0);
+		this.conf = resolveConfig(conf, DEFAULTS);
+		this.concurrency = toConcurrency(conf.concurrency);
 		this.paused = !!conf.paused;
 		this.running = 0;
 		this.q = new TaskQueue<QueueItem>();
@@ -121,7 +150,7 @@ export default class Chiqq {
 		// attempt is 1-indexed (1 = first retry).
 		// factor <= 1: constant cooling. factor > 1: exponential (cooling * factor^(attempt-1)).
 		if (conf.retryFactor <= 1) return conf.retryCooling;
-		return conf.retryCooling * conf.retryFactor ** (attempt - 1);
+		return toDelay(conf.retryCooling * conf.retryFactor ** (attempt - 1));
 	}
 
 	private postTaskCheck() {
@@ -202,7 +231,7 @@ export default class Chiqq {
 
 	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
-		const conf: ResolvedConfig = {...this.conf, ...configObj};
+		const conf = hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
 		return new Promise<T>((resolve, reject) => {
 			const item: QueueItem<T> = {task, resolve, reject, retried: 0, conf};
 			if (configObj.addAsFirst) {
@@ -274,9 +303,9 @@ export default class Chiqq {
 	 * as tasks complete naturally.
 	 */
 	setConcurrency(concurrency: number) {
-		this.concurrency = Math.max(1, concurrency | 0);
-		let diff = this.concurrency - this.running;
-		while (0 < diff--) {
+		this.concurrency = toConcurrency(concurrency);
+		if (this.paused) return;
+		while (this.q.length && this.running < this.concurrency) {
 			this.tick();
 		}
 	}
