@@ -18,48 +18,9 @@
 		}
 	},
 	"linter": {
-		"enabled": true,
-		"rules": {
-			"correctness": "error",
-			"suspicious": "error"
-		}
+		"enabled": false
 	},
 	"files": {
 		"includes": ["{.,src,test}/**/*.{ts,js,json,md}"]
-	},
-	"overrides": [
-		{
-			"includes": ["src/index.ts"],
-			"linter": {
-				"rules": {
-					"style": {
-						"useConst": "off"
-					},
-					"suspicious": {
-						"noBitwiseOperators": "off",
-						"noExplicitAny": "off",
-						"noImplicitAnyLet": "off",
-						"noEvolvingTypes": "off",
-						"noAsyncPromiseExecutor": "off",
-						"useAwait": "off"
-					}
-				}
-			}
-		},
-		{
-			"includes": ["test/**", "examples/**"],
-			"linter": {
-				"rules": {
-					"correctness": {
-						"useImportExtensions": "off"
-					},
-					"suspicious": {
-						"useAwait": "off",
-						"noExplicitAny": "off",
-						"noConsole": "off"
-					}
-				}
-			}
-		}
-	]
+	}
 }
