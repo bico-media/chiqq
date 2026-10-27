@@ -108,11 +108,12 @@ export default class Chiqq {
 		const payload = this.q.shift();
 		if (!payload) return;
 
-		// I have work, so hold my chained queue (cascades down through empty links).
-		this.chained?.pause();
-
 		this.running++;
+
 		const conf = payload.conf;
+
+		// I have work, so hold my chained queue
+		this.chained?.pause();
 
 		const run = async () => {
 			try {
