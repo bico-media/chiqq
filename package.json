@@ -41,9 +41,11 @@
 		"test": "bun test",
 		"test-dist": "node test/dist/esm.mjs && node test/dist/cjs.cjs",
 		"typecheck": "tsc -p .",
-		"prerelease": "git diff-index --quiet HEAD -- || (echo 'Please commit all files or stash them' && exit 1) && yarn test && yarn build",
 		"release": "yarn version",
-		"postrelease": "npm login && npm publish && git push && git push --tags && echo \"Successfully released version $npm_package_version\""
+		"preversion": "git diff-index --quiet HEAD -- || (echo 'Please commit all files or stash them' && exit 1) && bun install --frozen-lockfile && yarn typecheck && yarn test && npm login",
+		"version": "yarn build && yarn test-dist && git add dist types",
+		"prepublishOnly": "yarn build",
+		"postversion": "npm publish && git push && git push --tags && echo \"Successfully released version $npm_package_version\""
 	},
 	"keywords": [
 		"queue",
