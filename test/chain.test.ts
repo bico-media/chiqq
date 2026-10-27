@@ -237,3 +237,59 @@ describe('Chiqq.chain() - behaviour', () => {
 		expect(order).toContain('b1');
 	});
 });
+
+describe('Chiqq.chain() - user pause vs chain hold', () => {
+	it('keeps a downstream pause callback when upstream work arrives', async () => {
+		const a = new Chiqq();
+		const b = new Chiqq();
+		a.chain(b);
+
+		const pb = b.add(() => delay(20));
+		let fired = false;
+		b.pause(() => {
+			fired = true;
+		});
+		await a.add(() => 1);
+
+		await pb;
+		await delay(5);
+		expect(fired).toBe(true);
+	});
+
+	it('keeps a downstream user pause when upstream drains', async () => {
+		const a = new Chiqq();
+		const b = new Chiqq();
+		a.chain(b);
+
+		b.pause();
+		let ran = false;
+		const pb = b.add(() => {
+			ran = true;
+		});
+		await a.add(() => delay(5));
+		await delay(10);
+		expect(ran).toBe(false);
+		expect(b.status().isPaused).toBe(true);
+
+		b.resume();
+		await pb;
+		expect(ran).toBe(true);
+	});
+
+	it('releases the rest of the chain when a user-paused middle queue resumes', async () => {
+		const a = new Chiqq();
+		const b = new Chiqq();
+		const c = new Chiqq();
+		a.chain(b).chain(c);
+
+		b.pause();
+		const order: string[] = [];
+		const pc = c.add(makeTask(order, 'c1'));
+		await delay(10);
+		expect(order).toEqual([]);
+
+		b.resume();
+		await pc;
+		expect(order).toEqual(['c1']);
+	});
+});

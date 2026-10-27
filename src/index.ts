@@ -128,6 +128,8 @@ export default class Chiqq {
 	conf: ResolvedConfig;
 	running: number;
 	paused: boolean;
+	// Set by the upstream queue in a chain, separate from the user's own pause.
+	held: boolean;
 	q: TaskQueue<QueueItem>;
 	pauseCallback: (() => void) | null;
 	completeCallback: (() => void) | null;
@@ -138,6 +140,7 @@ export default class Chiqq {
 		this.conf = resolveConfig(conf, DEFAULTS);
 		this.concurrency = toConcurrency(conf.concurrency);
 		this.paused = !!conf.paused;
+		this.held = false;
 		this.running = 0;
 		this.q = new TaskQueue<QueueItem>();
 		this.pauseCallback = null;
@@ -169,16 +172,16 @@ export default class Chiqq {
 			this.completeCallback = null;
 			cb();
 		}
-		// Chain handoff: when not paused and fully idle (pending retries do not
-		// count), resume the chained queue. The !paused guard is essential so a
-		// paused queue draining its in-flight task does not wake the chain.
-		if (!this.paused && this.running === 0 && this.q.length === 0) {
-			this.chained?.resume();
+		// Chain handoff: when runnable and fully idle (pending retries do not
+		// count), release the chained queue. The paused/held guard is essential so
+		// a paused queue draining its in-flight task does not wake the chain.
+		if (!this.paused && !this.held && this.running === 0 && this.q.length === 0) {
+			this.chained?.release();
 		}
 	}
 
 	private tick() {
-		if (this.paused) return;
+		if (this.paused || this.held) return;
 		if (this.concurrency <= this.running) return;
 
 		const payload = this.q.shift();
@@ -189,7 +192,7 @@ export default class Chiqq {
 		const conf = payload.conf;
 
 		// I have work, so hold my chained queue
-		this.chained?.pause();
+		if (this.chained && !this.chained.held) this.chained.hold();
 
 		const run = async () => {
 			try {
@@ -260,8 +263,8 @@ export default class Chiqq {
 	pause(callback?: () => void) {
 		this.paused = true;
 		this.pauseCallback = callback || null;
-		// Propagate the pause down the chain (cascades through empty links).
-		this.chained?.pause();
+		// Hold the rest of the chain (cascades through empty links).
+		this.chained?.hold();
 		// If already idle, fire on a microtask so behavior is consistent.
 		if (callback && this.running === 0) {
 			this.pauseCallback = null;
@@ -271,14 +274,30 @@ export default class Chiqq {
 
 	resume() {
 		this.paused = false;
+		this.held = false;
 		this.pauseCallback = null;
+		this.fill();
+	}
+
+	private hold() {
+		this.held = true;
+		this.chained?.hold();
+	}
+
+	private release() {
+		this.held = false;
+		this.fill();
+	}
+
+	private fill() {
+		if (this.paused || this.held) return;
 		while (this.q.length && this.running < this.concurrency) {
 			this.tick();
 		}
-		// If I was resumed but have nothing to run, pass the baton forward so
-		// the chain flows past empty links instead of stalling here.
+		// If I have nothing to run, pass the baton forward so the chain flows
+		// past empty links instead of stalling here.
 		if (this.running === 0 && this.q.length === 0) {
-			this.chained?.resume();
+			this.chained?.release();
 		}
 	}
 
@@ -304,10 +323,7 @@ export default class Chiqq {
 	 */
 	setConcurrency(concurrency: number) {
 		this.concurrency = toConcurrency(concurrency);
-		if (this.paused) return;
-		while (this.q.length && this.running < this.concurrency) {
-			this.tick();
-		}
+		this.fill();
 	}
 
 	/**
@@ -363,7 +379,7 @@ export default class Chiqq {
 
 	status() {
 		return {
-			isPaused: this.paused,
+			isPaused: this.paused || this.held,
 			config: {
 				concurrency: this.concurrency,
 				taskDelay: this.conf.taskDelay,
