@@ -1,0 +1,137 @@
+export interface Configuration {
+    concurrency?: number;
+    taskDelay?: number;
+    paused?: boolean;
+    retryMax?: number;
+    retryCooling?: number;
+    retryFactor?: number;
+}
+export interface ConfigTask {
+    taskDelay?: number;
+    retryMax?: number;
+    retryCooling?: number;
+    retryFactor?: number;
+    addAsFirst?: boolean;
+}
+export interface ChiqqStatus {
+    isPaused: boolean;
+    config: {
+        concurrency: number;
+        taskDelay: number;
+        retry: {
+            max: number;
+            cooling: number;
+            factor: number;
+        };
+    };
+    tasks: {
+        /** active + queued */
+        total: number;
+        /** currently running */
+        active: number;
+        /** waiting to start, including tasks waiting to be retried */
+        queued: number;
+    };
+}
+export declare class ChiqqClearedError extends Error {
+    constructor(message?: string);
+}
+export declare class Chiqq {
+    private limit;
+    private conf;
+    private running;
+    private paused;
+    private held;
+    private q;
+    private pauseCallback;
+    private completeCallback;
+    private errorCallback;
+    private idleWaiters;
+    private pendingRetry;
+    private chained;
+    private lastStart;
+    private delayTimer;
+    constructor(conf?: Configuration);
+    private retryDelay;
+    private fail;
+    private isDrained;
+    private postTaskCheck;
+    private tick;
+    private run;
+    add<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
+    /**
+     * Adds a task at the front of the queue so it runs as soon as a slot is
+     * available, ahead of any tasks added before it. Thin proxy over `add()`
+     * with `addAsFirst: true`.
+     */
+    addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
+    pause(callback?: () => void): void;
+    resume(): void;
+    private hold;
+    private release;
+    private fill;
+    /**
+     * Links a lower-priority follower queue. While this queue has work it holds
+     * the chained queue paused; when this queue goes idle it resumes the chained
+     * queue, forming a longer prioritised queue. Pause/resume signals cascade
+     * forward through the chain, even across empty links. Links are forward-only
+     * (a chained queue has no reference to its upstream); the developer should
+     * resume only the top of the chain. Returns the chained queue so links can be
+     * built fluently: `a.chain(b).chain(c)` builds `a -> b -> c`.
+     */
+    chain(queue: Chiqq): Chiqq;
+    /**
+     * Updates the concurrency limit and immediately attempts to utilize the new capacity.
+     * If the new limit is higher than the current running tasks, additional tasks will be started.
+     * If the new limit is lower, no running tasks are interrupted - the limit will take effect
+     * as tasks complete naturally.
+     */
+    setConcurrency(concurrency: number): void;
+    /**
+     * Removes all queued and pending-retry tasks. Currently running tasks
+     * are not affected.
+     *
+     * - `clear()` / `clear(false)` (default): cleared tasks reject with a
+     *   `ChiqqClearedError`.
+     * - `clear(true)`: cleared tasks resolve with `null`. Use this when you
+     *   want to discard the work and don't care about results, so awaited
+     *   promises don't reject.
+     *
+     * Returns the number of tasks cleared.
+     */
+    clear(silent?: boolean): number;
+    /**
+     * Registers a one-shot callback that fires the next time the queue
+     * transitions to drained (no running tasks, no queued tasks, no pending
+     * retries) as a result of a task completing or being cleared. If the
+     * queue is already idle the callback waits for the next drain.
+     * Calling onComplete again before the callback fires replaces it.
+     */
+    onComplete(callback: () => void): void;
+    /**
+     * Registers a handler for tasks that fail after their last retry. While a
+     * handler is set, rejected task promises (failed or cleared) are marked as
+     * handled, so `add()` without `await` or `.catch()` cannot crash the
+     * process with an unhandled rejection. Awaited promises still reject.
+     * Pass `null` to remove the handler.
+     */
+    onError(callback: ((error: unknown) => void) | null): void;
+    /**
+     * Returns a promise that resolves once the queue is drained (no running
+     * tasks, no queued tasks, no pending retries). Resolves right away if the
+     * queue is already idle. A paused queue with queued tasks is not idle.
+     */
+    onIdle(): Promise<void>;
+    /** Maximum number of tasks running at once. */
+    get concurrency(): number;
+    /** Number of tasks running right now. */
+    get active(): number;
+    /** Number of tasks waiting to start, including tasks waiting to be retried. */
+    get queued(): number;
+    /** True when paused by `pause()` or held by an upstream queue in a chain. */
+    get isPaused(): boolean;
+    /** True when nothing is running, queued or waiting to be retried. */
+    get isIdle(): boolean;
+    status(): ChiqqStatus;
+}
+export default Chiqq;

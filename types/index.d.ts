@@ -13,40 +13,51 @@ export interface ConfigTask {
     retryFactor?: number;
     addAsFirst?: boolean;
 }
-interface ResolvedConfig {
-    taskDelay: number;
-    retryMax: number;
-    retryCooling: number;
-    retryFactor: number;
-}
-interface QueueItem<T = unknown> {
-    task: () => T | Promise<T>;
-    resolve: (value: T) => void;
-    reject: (reason?: unknown) => void;
-    retried: number;
-    conf: ResolvedConfig;
-}
-interface PendingRetryEntry {
-    payload: QueueItem;
-    timer: ReturnType<typeof setTimeout>;
+export interface ChiqqStatus {
+    isPaused: boolean;
+    config: {
+        concurrency: number;
+        taskDelay: number;
+        retry: {
+            max: number;
+            cooling: number;
+            factor: number;
+        };
+    };
+    tasks: {
+        /** active + queued */
+        total: number;
+        /** currently running */
+        active: number;
+        /** waiting to start, including tasks waiting to be retried */
+        queued: number;
+    };
 }
 export declare class ChiqqClearedError extends Error {
     constructor(message?: string);
 }
-export default class Chiqq {
-    concurrency: number;
-    conf: ResolvedConfig;
-    running: number;
-    paused: boolean;
-    q: QueueItem[];
-    pauseCallback: (() => void) | null;
-    completeCallback: (() => void) | null;
-    pendingRetry: Set<PendingRetryEntry>;
-    chained: Chiqq | null;
+export declare class Chiqq {
+    private limit;
+    private conf;
+    private running;
+    private paused;
+    private held;
+    private q;
+    private pauseCallback;
+    private completeCallback;
+    private errorCallback;
+    private idleWaiters;
+    private pendingRetry;
+    private chained;
+    private lastStart;
+    private delayTimer;
     constructor(conf?: Configuration);
     private retryDelay;
+    private fail;
+    private isDrained;
     private postTaskCheck;
     private tick;
+    private run;
     add<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
     /**
      * Adds a task at the front of the queue so it runs as soon as a slot is
@@ -56,6 +67,9 @@ export default class Chiqq {
     addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
     pause(callback?: () => void): void;
     resume(): void;
+    private hold;
+    private release;
+    private fill;
     /**
      * Links a lower-priority follower queue. While this queue has work it holds
      * the chained queue paused; when this queue goes idle it resumes the chained
@@ -94,23 +108,30 @@ export default class Chiqq {
      * Calling onComplete again before the callback fires replaces it.
      */
     onComplete(callback: () => void): void;
-    private next;
-    status(): {
-        isPaused: boolean;
-        config: {
-            concurrency: number;
-            taskDelay: number;
-            retry: {
-                max: number;
-                cooling: number;
-                factor: number;
-            };
-        };
-        tasks: {
-            total: number;
-            active: number;
-            queued: number;
-        };
-    };
+    /**
+     * Registers a handler for tasks that fail after their last retry. While a
+     * handler is set, rejected task promises (failed or cleared) are marked as
+     * handled, so `add()` without `await` or `.catch()` cannot crash the
+     * process with an unhandled rejection. Awaited promises still reject.
+     * Pass `null` to remove the handler.
+     */
+    onError(callback: ((error: unknown) => void) | null): void;
+    /**
+     * Returns a promise that resolves once the queue is drained (no running
+     * tasks, no queued tasks, no pending retries). Resolves right away if the
+     * queue is already idle. A paused queue with queued tasks is not idle.
+     */
+    onIdle(): Promise<void>;
+    /** Maximum number of tasks running at once. */
+    get concurrency(): number;
+    /** Number of tasks running right now. */
+    get active(): number;
+    /** Number of tasks waiting to start, including tasks waiting to be retried. */
+    get queued(): number;
+    /** True when paused by `pause()` or held by an upstream queue in a chain. */
+    get isPaused(): boolean;
+    /** True when nothing is running, queued or waiting to be retried. */
+    get isIdle(): boolean;
+    status(): ChiqqStatus;
 }
-export {};
+export default Chiqq;
