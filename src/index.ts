@@ -87,6 +87,23 @@ class TaskQueue<T> {
 	}
 }
 
+export interface ChiqqStatus {
+	isPaused: boolean;
+	config: {
+		concurrency: number;
+		taskDelay: number;
+		retry: {max: number; cooling: number; factor: number};
+	};
+	tasks: {
+		/** active + queued */
+		total: number;
+		/** currently running */
+		active: number;
+		/** waiting to start, including tasks waiting to be retried */
+		queued: number;
+	};
+}
+
 export class ChiqqClearedError extends Error {
 	constructor(message = 'Chiqq queue cleared') {
 		super(message);
@@ -131,25 +148,25 @@ const hasOverrides = (conf: ConfigTask) =>
 	conf.retryFactor !== undefined;
 
 export default class Chiqq {
-	concurrency: number;
-	conf: ResolvedConfig;
-	running: number;
-	paused: boolean;
+	private limit: number;
+	private conf: ResolvedConfig;
+	private running: number;
+	private paused: boolean;
 	// Set by the upstream queue in a chain, separate from the user's own pause.
-	held: boolean;
-	q: TaskQueue<QueueItem>;
-	pauseCallback: (() => void) | null;
-	completeCallback: (() => void) | null;
-	errorCallback: ((error: unknown) => void) | null;
-	idleWaiters: (() => void)[];
-	pendingRetry: Set<PendingRetryEntry>;
-	chained: Chiqq | null;
-	lastStart: number;
-	delayTimer: ReturnType<typeof setTimeout> | null;
+	private held: boolean;
+	private q: TaskQueue<QueueItem>;
+	private pauseCallback: (() => void) | null;
+	private completeCallback: (() => void) | null;
+	private errorCallback: ((error: unknown) => void) | null;
+	private idleWaiters: (() => void)[];
+	private pendingRetry: Set<PendingRetryEntry>;
+	private chained: Chiqq | null;
+	private lastStart: number;
+	private delayTimer: ReturnType<typeof setTimeout> | null;
 
 	constructor(conf: Configuration = {}) {
 		this.conf = resolveConfig(conf, DEFAULTS);
-		this.concurrency = toConcurrency(conf.concurrency);
+		this.limit = toConcurrency(conf.concurrency);
 		this.paused = !!conf.paused;
 		this.held = false;
 		this.running = 0;
@@ -223,7 +240,7 @@ export default class Chiqq {
 
 	// Starts the next task if a slot is free. Returns false when nothing was started.
 	private tick(): boolean {
-		if (this.paused || this.held || this.concurrency <= this.running) return false;
+		if (this.paused || this.held || this.limit <= this.running) return false;
 
 		const payload = this.q.peek();
 		if (!payload) return false;
@@ -368,7 +385,7 @@ export default class Chiqq {
 	 * as tasks complete naturally.
 	 */
 	setConcurrency(concurrency: number) {
-		this.concurrency = toConcurrency(concurrency);
+		this.limit = toConcurrency(concurrency);
 		this.fill();
 	}
 
@@ -439,11 +456,36 @@ export default class Chiqq {
 		return new Promise(resolve => this.idleWaiters.push(resolve));
 	}
 
-	status() {
+	/** Maximum number of tasks running at once. */
+	get concurrency(): number {
+		return this.limit;
+	}
+
+	/** Number of tasks running right now. */
+	get active(): number {
+		return this.running;
+	}
+
+	/** Number of tasks waiting to start, including tasks waiting to be retried. */
+	get queued(): number {
+		return this.q.length + this.pendingRetry.size;
+	}
+
+	/** True when paused by `pause()` or held by an upstream queue in a chain. */
+	get isPaused(): boolean {
+		return this.paused || this.held;
+	}
+
+	/** True when nothing is running, queued or waiting to be retried. */
+	get isIdle(): boolean {
+		return this.isDrained();
+	}
+
+	status(): ChiqqStatus {
 		return {
 			isPaused: this.paused || this.held,
 			config: {
-				concurrency: this.concurrency,
+				concurrency: this.limit,
 				taskDelay: this.conf.taskDelay,
 				retry: {
 					max: this.conf.retryMax,

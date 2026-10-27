@@ -306,6 +306,8 @@ describe('Chiqq.chain() - cycles', () => {
 		const c = new Chiqq();
 		a.chain(b).chain(c);
 		expect(() => c.chain(a)).toThrow('cycle');
-		expect(c.chained).toBe(null);
+		// The rejected link was not made: c still runs on its own.
+		const d = new Chiqq();
+		expect(c.chain(d)).toBe(d);
 	});
 });
