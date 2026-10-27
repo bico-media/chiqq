@@ -28,6 +28,7 @@ interface QueueItem<T = unknown> {
 	reject: (reason?: unknown) => void;
 	retried: number;
 	conf: ResolvedConfig;
+	promise: Promise<T>;
 }
 
 interface PendingRetryEntry {
@@ -96,6 +97,8 @@ export class ChiqqClearedError extends Error {
 // setTimeout fires immediately for delays above this.
 const MAX_DELAY = 2 ** 31 - 1;
 
+const noop = () => {};
+
 const DEFAULTS: ResolvedConfig = {taskDelay: 0, retryMax: 0, retryCooling: 50, retryFactor: 0};
 
 function toNumber(value: unknown, fallback: number): number {
@@ -137,6 +140,7 @@ export default class Chiqq {
 	q: TaskQueue<QueueItem>;
 	pauseCallback: (() => void) | null;
 	completeCallback: (() => void) | null;
+	errorCallback: ((error: unknown) => void) | null;
 	idleWaiters: (() => void)[];
 	pendingRetry: Set<PendingRetryEntry>;
 	chained: Chiqq | null;
@@ -152,6 +156,7 @@ export default class Chiqq {
 		this.q = new TaskQueue<QueueItem>();
 		this.pauseCallback = null;
 		this.completeCallback = null;
+		this.errorCallback = null;
 		this.idleWaiters = [];
 		this.pendingRetry = new Set();
 		this.chained = null;
@@ -164,6 +169,26 @@ export default class Chiqq {
 		// factor <= 1: constant cooling. factor > 1: exponential (cooling * factor^(attempt-1)).
 		if (conf.retryFactor <= 1) return conf.retryCooling;
 		return toDelay(conf.retryCooling * conf.retryFactor ** (attempt - 1));
+	}
+
+	// Rejects a task's promise. With an onError handler registered the promise
+	// is marked as handled, so tasks nobody awaits cannot crash the process.
+	private fail(item: QueueItem, error: unknown, report: boolean) {
+		const cb = this.errorCallback;
+		if (cb) {
+			item.promise.catch(noop);
+			if (report) {
+				try {
+					cb(error);
+				} catch (e) {
+					// Never let a throwing handler stall the queue.
+					queueMicrotask(() => {
+						throw e;
+					});
+				}
+			}
+		}
+		item.reject(error);
 	}
 
 	private isDrained(): boolean {
@@ -247,7 +272,7 @@ export default class Chiqq {
 				);
 				this.pendingRetry.add(entry);
 			} else {
-				payload.reject(e);
+				this.fail(payload, e, true);
 			}
 		}
 		this.postTaskCheck();
@@ -257,16 +282,18 @@ export default class Chiqq {
 	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
 		const conf = hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
-		return new Promise<T>((resolve, reject) => {
-			const item: QueueItem<T> = {task, resolve, reject, retried: 0, conf};
-			if (configObj.addAsFirst) {
-				this.q.unshift(item as QueueItem);
-			} else {
-				this.q.push(item as QueueItem);
-			}
-
-			this.tick();
+		let item!: QueueItem<T>;
+		const promise = new Promise<T>((resolve, reject) => {
+			item = {task, resolve, reject, retried: 0, conf, promise: undefined as never};
 		});
+		item.promise = promise;
+		if (configObj.addAsFirst) {
+			this.q.unshift(item as QueueItem);
+		} else {
+			this.q.push(item as QueueItem);
+		}
+		this.tick();
+		return promise;
 	}
 
 	/**
@@ -372,7 +399,7 @@ export default class Chiqq {
 			if (silent) {
 				item.resolve(null as never);
 			} else {
-				item.reject(new ChiqqClearedError());
+				this.fail(item, new ChiqqClearedError(), false);
 			}
 		}
 
@@ -389,6 +416,17 @@ export default class Chiqq {
 	 */
 	onComplete(callback: () => void) {
 		this.completeCallback = callback;
+	}
+
+	/**
+	 * Registers a handler for tasks that fail after their last retry. While a
+	 * handler is set, rejected task promises (failed or cleared) are marked as
+	 * handled, so `add()` without `await` or `.catch()` cannot crash the
+	 * process with an unhandled rejection. Awaited promises still reject.
+	 * Pass `null` to remove the handler.
+	 */
+	onError(callback: ((error: unknown) => void) | null) {
+		this.errorCallback = callback;
 	}
 
 	/**
