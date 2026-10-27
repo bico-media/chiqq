@@ -31,7 +31,9 @@ describe('Chiqq Edge Cases', () => {
 		const queue = new Chiqq({concurrency: 2, taskDelay: 0});
 
 		// First task occupies one slot for long enough to overlap.
+		let firstStartedAt = 0;
 		const first = queue.add(async () => {
+			firstStartedAt = Date.now();
 			await new Promise(resolve => setTimeout(resolve, 150));
 			return 'first';
 		});
@@ -40,11 +42,10 @@ describe('Chiqq Edge Cases', () => {
 		await new Promise(resolve => setTimeout(resolve, 10));
 		expect(queue.status().tasks.active).toBe(1);
 
-		const start = Date.now();
 		let secondStartedAt = 0;
 		const second = queue.add(
 			async () => {
-				secondStartedAt = Date.now() - start;
+				secondStartedAt = Date.now();
 				return 'second';
 			},
 			{taskDelay: 80}
@@ -53,9 +54,8 @@ describe('Chiqq Edge Cases', () => {
 		await second;
 		await first;
 
-		// add() awaits `taskDelay * running` before triggering tick(), so the
-		// second task should not start before ~80ms despite a free slot.
-		expect(secondStartedAt).toBeGreaterThanOrEqual(70);
+		// The second task waits 80ms after the previous start despite a free slot.
+		expect(secondStartedAt - firstStartedAt).toBeGreaterThanOrEqual(79);
 	});
 
 	it('respects per-task retryCooling override', async () => {

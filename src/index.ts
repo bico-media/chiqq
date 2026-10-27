@@ -60,6 +60,10 @@ class TaskQueue<T> {
 		}
 	}
 
+	peek(): T | undefined {
+		return this.items[this.head];
+	}
+
 	shift(): T | undefined {
 		if (this.head === this.items.length) return undefined;
 		const item = this.items[this.head];
@@ -135,6 +139,8 @@ export default class Chiqq {
 	completeCallback: (() => void) | null;
 	pendingRetry: Set<PendingRetryEntry>;
 	chained: Chiqq | null;
+	lastStart: number;
+	delayTimer: ReturnType<typeof setTimeout> | null;
 
 	constructor(conf: Configuration = {}) {
 		this.conf = resolveConfig(conf, DEFAULTS);
@@ -147,6 +153,8 @@ export default class Chiqq {
 		this.completeCallback = null;
 		this.pendingRetry = new Set();
 		this.chained = null;
+		this.lastStart = 0;
+		this.delayTimer = null;
 	}
 
 	private retryDelay(conf: ResolvedConfig, attempt: number): number {
@@ -180,56 +188,62 @@ export default class Chiqq {
 		}
 	}
 
-	private tick() {
-		if (this.paused || this.held) return;
-		if (this.concurrency <= this.running) return;
+	// Starts the next task if a slot is free. Returns false when nothing was started.
+	private tick(): boolean {
+		if (this.paused || this.held || this.concurrency <= this.running) return false;
 
-		const payload = this.q.shift();
-		if (!payload) return;
+		const payload = this.q.peek();
+		if (!payload) return false;
 
+		if (payload.conf.taskDelay) {
+			const wait = this.lastStart + payload.conf.taskDelay - Date.now();
+			if (wait > 0) {
+				this.delayTimer ??= setTimeout(() => {
+					this.delayTimer = null;
+					this.fill();
+				}, wait);
+				return false;
+			}
+		}
+
+		this.q.shift();
 		this.running++;
-
-		const conf = payload.conf;
+		this.lastStart = Date.now();
 
 		// I have work, so hold my chained queue
 		if (this.chained && !this.chained.held) this.chained.hold();
 
-		const run = async () => {
-			try {
-				const result = await payload.task();
-				this.running--;
-				payload.resolve(result);
-				this.postTaskCheck();
-				this.next(conf);
-			} catch (e) {
-				this.running--;
+		this.run(payload);
+		return true;
+	}
 
-				if (conf.retryMax < 0 || payload.retried < conf.retryMax) {
-					payload.retried++;
-					const wait = this.retryDelay(conf, payload.retried);
-					const entry: PendingRetryEntry = {payload, timer: undefined as never};
-					entry.timer = setTimeout(() => {
+	private async run(payload: QueueItem) {
+		const conf = payload.conf;
+		try {
+			const result = await payload.task();
+			this.running--;
+			payload.resolve(result);
+		} catch (e) {
+			this.running--;
+
+			if (conf.retryMax < 0 || payload.retried < conf.retryMax) {
+				payload.retried++;
+				const entry: PendingRetryEntry = {payload, timer: undefined as never};
+				entry.timer = setTimeout(
+					() => {
 						this.pendingRetry.delete(entry);
 						this.q.unshift(payload);
 						this.tick();
-					}, wait);
-					this.pendingRetry.add(entry);
-					this.postTaskCheck();
-					this.next(conf);
-					return;
-				}
-
+					},
+					this.retryDelay(conf, payload.retried)
+				);
+				this.pendingRetry.add(entry);
+			} else {
 				payload.reject(e);
-				this.postTaskCheck();
-				this.next(conf);
 			}
-		};
-
-		if (conf.taskDelay) {
-			setTimeout(run, 0);
-		} else {
-			run();
 		}
+		this.postTaskCheck();
+		this.tick();
 	}
 
 	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
@@ -243,11 +257,7 @@ export default class Chiqq {
 				this.q.push(item as QueueItem);
 			}
 
-			if (conf.taskDelay && this.running) {
-				setTimeout(() => this.tick(), conf.taskDelay * this.running);
-			} else {
-				this.tick();
-			}
+			this.tick();
 		});
 	}
 
@@ -291,9 +301,7 @@ export default class Chiqq {
 
 	private fill() {
 		if (this.paused || this.held) return;
-		while (this.q.length && this.running < this.concurrency) {
-			this.tick();
-		}
+		while (this.tick()) {}
 		// If I have nothing to run, pass the baton forward so the chain flows
 		// past empty links instead of stalling here.
 		if (this.running === 0 && this.q.length === 0) {
@@ -343,6 +351,10 @@ export default class Chiqq {
 	 */
 	clear(silent = false): number {
 		const queued = this.q.drain();
+		if (this.delayTimer) {
+			clearTimeout(this.delayTimer);
+			this.delayTimer = null;
+		}
 		const retries = Array.from(this.pendingRetry);
 		this.pendingRetry.clear();
 		for (const entry of retries) clearTimeout(entry.timer);
@@ -369,15 +381,6 @@ export default class Chiqq {
 	 */
 	onComplete(callback: () => void) {
 		this.completeCallback = callback;
-	}
-
-	private next(configObj: ConfigTask = {}) {
-		const conf = {...this.conf, ...configObj};
-		if (conf.taskDelay && this.running) {
-			setTimeout(() => this.tick(), conf.taskDelay);
-			return;
-		}
-		this.tick();
 	}
 
 	status() {
