@@ -293,3 +293,19 @@ describe('Chiqq.chain() - user pause vs chain hold', () => {
 		expect(order).toEqual(['c1']);
 	});
 });
+
+describe('Chiqq.chain() - cycles', () => {
+	it('throws when chaining a queue to itself', () => {
+		const a = new Chiqq();
+		expect(() => a.chain(a)).toThrow('cycle');
+	});
+
+	it('throws when a chain would loop back', () => {
+		const a = new Chiqq();
+		const b = new Chiqq();
+		const c = new Chiqq();
+		a.chain(b).chain(c);
+		expect(() => c.chain(a)).toThrow('cycle');
+		expect(c.chained).toBe(null);
+	});
+});

@@ -311,6 +311,9 @@ export default class Chiqq {
 	 * built fluently: `a.chain(b).chain(c)` builds `a -> b -> c`.
 	 */
 	chain(queue: Chiqq): Chiqq {
+		for (let link: Chiqq | null = queue; link; link = link.chained) {
+			if (link === this) throw new Error('Chiqq chain would create a cycle');
+		}
 		this.chained = queue;
 		return queue;
 	}
