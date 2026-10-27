@@ -4,11 +4,13 @@ import Chiqq from '../src/index';
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Builds a task that waits `ms` then records its name in the shared order array.
-const makeTask = (order: string[], name: string, ms = 5) => async () => {
-	await delay(ms);
-	order.push(name);
-	return name;
-};
+const makeTask =
+	(order: string[], name: string, ms = 5) =>
+	async () => {
+		await delay(ms);
+		order.push(name);
+		return name;
+	};
 
 const swallow = () => undefined;
 

@@ -113,7 +113,7 @@ describe('Chiqq Concurrency Control', () => {
 		const additionalTasks = [
 			queue.add(createTask(2)),
 			queue.add(createTask(3)),
-			queue.add(createTask(4))
+			queue.add(createTask(4)),
 		];
 
 		// Increase concurrency to 3
@@ -129,13 +129,13 @@ describe('Chiqq Concurrency Control', () => {
 
 	it('should validate concurrency input and clamp to minimum 1', async () => {
 		const queue = new Chiqq({concurrency: 2});
-		
+
 		queue.setConcurrency(0);
 		expect(queue.concurrency).toBe(1);
-		
+
 		queue.setConcurrency(-5);
 		expect(queue.concurrency).toBe(1);
-		
+
 		queue.setConcurrency(3.7);
 		expect(queue.concurrency).toBe(3);
 	});
@@ -151,11 +151,7 @@ describe('Chiqq Concurrency Control', () => {
 		};
 
 		// Add tasks that will start immediately
-		const tasks = [
-			queue.add(createTask(1)),
-			queue.add(createTask(2)),
-			queue.add(createTask(3))
-		];
+		const tasks = [queue.add(createTask(1)), queue.add(createTask(2)), queue.add(createTask(3))];
 
 		await new Promise(resolve => setTimeout(resolve, 10)); // Let tasks start
 
@@ -163,10 +159,7 @@ describe('Chiqq Concurrency Control', () => {
 		queue.setConcurrency(1);
 
 		// Add more tasks
-		const additionalTasks = [
-			queue.add(createTask(4)),
-			queue.add(createTask(5))
-		];
+		const additionalTasks = [queue.add(createTask(4)), queue.add(createTask(5))];
 
 		await Promise.all([...tasks, ...additionalTasks]);
 
