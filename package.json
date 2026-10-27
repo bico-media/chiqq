@@ -17,7 +17,6 @@
 		"dist",
 		"src",
 		"types",
-		"mod.ts",
 		"README.md"
 	],
 	"scripts": {
