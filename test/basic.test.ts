@@ -84,3 +84,11 @@ describe('Chiqq Basic Functionality', () => {
 		await expect(queue.add(task)).rejects.toThrow('Task failed');
 	});
 });
+
+describe('Exports', () => {
+	it('exports Chiqq as both default and named export', async () => {
+		const mod = await import('../src/index');
+		expect(mod.default).toBe(mod.Chiqq);
+		expect(typeof mod.ChiqqClearedError).toBe('function');
+	});
+});

@@ -147,7 +147,7 @@ const hasOverrides = (conf: ConfigTask) =>
 	conf.retryCooling !== undefined ||
 	conf.retryFactor !== undefined;
 
-export default class Chiqq {
+export class Chiqq {
 	private limit: number;
 	private conf: ResolvedConfig;
 	private running: number;
@@ -501,3 +501,5 @@ export default class Chiqq {
 		};
 	}
 }
+
+export default Chiqq;
