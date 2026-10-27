@@ -47,8 +47,8 @@ describe('Chiqq.clear()', () => {
 		const b = queue.add(async () => 'B');
 
 		expect(queue.clear(true)).toBe(2);
-		expect(await a).toBe(null);
-		expect(await b).toBe(null);
+		expect(await a).toBeNull();
+		expect(await b).toBeNull();
 	});
 
 	it('silent=true resolves cleared pending retries with null', async () => {
@@ -62,7 +62,7 @@ describe('Chiqq.clear()', () => {
 		expect(queue.status().tasks.queued).toBe(1);
 
 		expect(queue.clear(true)).toBe(1);
-		expect(await failing).toBe(null);
+		expect(await failing).toBeNull();
 	});
 
 	it('rejects pending retries and cancels their timers', async () => {

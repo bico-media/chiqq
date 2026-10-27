@@ -52,7 +52,7 @@ describe('taskDelay', () => {
 		const second = queue.add(() => ran++);
 		expect(queue.clear(true)).toBe(1);
 		await first;
-		expect(await second).toBe(null);
+		expect(await second).toBeNull();
 		await delay(70);
 		expect(ran).toBe(1);
 	});
