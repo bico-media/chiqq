@@ -35,6 +35,53 @@ interface PendingRetryEntry {
 	timer: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * FIFO queue with O(1) shift. Array.prototype.shift() is O(n) in V8 for large
+ * arrays, so reads advance a head index instead, and the consumed prefix is
+ * sliced off once it is over half the array (and over 1024 items).
+ */
+class TaskQueue<T> {
+	private items: (T | undefined)[] = [];
+	private head = 0;
+
+	get length(): number {
+		return this.items.length - this.head;
+	}
+
+	push(item: T) {
+		this.items.push(item);
+	}
+
+	unshift(item: T) {
+		if (this.head > 0) {
+			this.items[--this.head] = item;
+		} else {
+			this.items.unshift(item);
+		}
+	}
+
+	shift(): T | undefined {
+		if (this.head === this.items.length) return undefined;
+		const item = this.items[this.head];
+		this.items[this.head++] = undefined;
+		if (this.head === this.items.length) {
+			this.items = [];
+			this.head = 0;
+		} else if (this.head > 1024 && this.head * 2 >= this.items.length) {
+			this.items = this.items.slice(this.head);
+			this.head = 0;
+		}
+		return item;
+	}
+
+	drain(): T[] {
+		const items = this.items.slice(this.head) as T[];
+		this.items = [];
+		this.head = 0;
+		return items;
+	}
+}
+
 export class ChiqqClearedError extends Error {
 	constructor(message = 'Chiqq queue cleared') {
 		super(message);
@@ -47,7 +94,7 @@ export default class Chiqq {
 	conf: ResolvedConfig;
 	running: number;
 	paused: boolean;
-	q: QueueItem[];
+	q: TaskQueue<QueueItem>;
 	pauseCallback: (() => void) | null;
 	completeCallback: (() => void) | null;
 	pendingRetry: Set<PendingRetryEntry>;
@@ -63,7 +110,7 @@ export default class Chiqq {
 		this.concurrency = Math.max(1, (conf.concurrency || 1) | 0);
 		this.paused = !!conf.paused;
 		this.running = 0;
-		this.q = [];
+		this.q = new TaskQueue<QueueItem>();
 		this.pauseCallback = null;
 		this.completeCallback = null;
 		this.pendingRetry = new Set();
@@ -247,7 +294,7 @@ export default class Chiqq {
 	 * Returns the number of tasks cleared.
 	 */
 	clear(silent = false): number {
-		const queued = this.q.splice(0, this.q.length);
+		const queued = this.q.drain();
 		const retries = Array.from(this.pendingRetry);
 		this.pendingRetry.clear();
 		for (const entry of retries) clearTimeout(entry.timer);
