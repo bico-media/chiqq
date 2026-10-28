@@ -18,3 +18,4 @@ coverage
 
 # Optional npm cache directory
 .npm
+context
