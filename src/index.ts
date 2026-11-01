@@ -61,53 +61,63 @@ interface PendingRetryEntry {
 }
 
 /**
- * FIFO queue with O(1) shift. Array.prototype.shift() is O(n) in V8 for large
- * arrays, so reads advance a head index instead, and the consumed prefix is
- * sliced off once it is over half the array (and over 1024 items).
+ * FIFO ring buffer. head and tail only count up (unshift counts head down),
+ * and the slot is the counter masked by the power-of-two capacity. Grows by
+ * doubling when full, and drops back to a small array when it runs empty.
  */
 class TaskQueue<T> {
-	private items: (T | undefined)[] = [];
+	private items: (T | undefined)[] = new Array(16);
+	private mask = 15;
 	private head = 0;
+	private tail = 0;
 
 	get length(): number {
-		return this.items.length - this.head;
+		return this.tail - this.head;
 	}
 
 	push(item: T) {
-		this.items.push(item);
+		if (this.tail - this.head > this.mask) this.grow();
+		this.items[this.tail++ & this.mask] = item;
 	}
 
 	unshift(item: T) {
-		if (this.head > 0) {
-			this.items[--this.head] = item;
-		} else {
-			this.items.unshift(item);
-		}
+		if (this.tail - this.head > this.mask) this.grow();
+		this.items[--this.head & this.mask] = item;
 	}
 
 	peek(): T | undefined {
-		return this.items[this.head];
+		return this.head === this.tail ? undefined : this.items[this.head & this.mask];
 	}
 
 	shift(): T | undefined {
-		if (this.head === this.items.length) return undefined;
-		const item = this.items[this.head];
-		this.items[this.head++] = undefined;
-		if (this.head === this.items.length) {
-			this.items = [];
-			this.head = 0;
-		} else if (this.head > 1024 && this.head * 2 >= this.items.length) {
-			this.items = this.items.slice(this.head);
-			this.head = 0;
+		if (this.head === this.tail) return undefined;
+		const slot = this.head++ & this.mask;
+		const item = this.items[slot];
+		this.items[slot] = undefined;
+		if (this.head === this.tail) {
+			this.head = this.tail = 0;
+			if (this.mask > 1023) {
+				this.items = new Array(16);
+				this.mask = 15;
+			}
 		}
 		return item;
 	}
 
 	drain(): T[] {
-		const items = this.items.slice(this.head) as T[];
-		this.items = [];
+		const out: T[] = [];
+		while (this.head !== this.tail) out.push(this.shift() as T);
+		return out;
+	}
+
+	private grow() {
+		const len = this.tail - this.head;
+		const next: (T | undefined)[] = new Array(this.items.length * 2);
+		for (let i = 0; i < len; i++) next[i] = this.items[(this.head + i) & this.mask];
+		this.items = next;
+		this.mask = next.length - 1;
 		this.head = 0;
-		return items;
+		this.tail = len;
 	}
 }
 
