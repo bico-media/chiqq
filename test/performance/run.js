@@ -5,10 +5,17 @@
 //   node run.js --runtimes node  limit to a comma separated list of runtimes (node,bun,deno)
 //   node run.js --libs chiqq,p-queue
 //   node run.js --scenarios sync-c1,backlog-100k
+//   node run.js --procs 5        processes per case (default 3), samples are pooled
+//   node run.js --out file.md    write somewhere else than results.md
 //   node run.js --case <lib> <scenario>   (internal) run one case and print JSON
 //
-// Every (runtime, lib, scenario) case runs in its own child process so JIT state and
-// heap from one library cannot leak into the next measurement.
+//   CHIQQ_VARIANTS=fast=/abs/path/index.ts,ring=/abs/other.ts node run.js --libs chiqq,chiqq-fast,chiqq-ring
+//                                adds chiqq builds to compare against each other
+//
+// Every (runtime, lib, scenario) case runs in its own child processes so JIT state and
+// heap from one library cannot leak into the next measurement. Each case runs in several
+// processes and all samples are pooled, so one unlucky process (JIT, GC, CPU clock)
+// does not decide the result.
 
 import {spawnSync} from 'node:child_process';
 import {readFileSync, writeFileSync} from 'node:fs';
@@ -18,7 +25,10 @@ import {fileURLToPath} from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CASE_TIMEOUT_MS = 60_000; // hard kill per case
-const CASE_BUDGET_MS = 30_000; // stop repeating once a case has used this much time
+const CASE_BUDGET_MS = 20_000; // stop repeating once a process has used this much time
+const SLOW_MS = 1_000; // a case this slow gets no extra processes, the answer is clear
+const WARMUP_RUNS = 5; // at least this many untimed runs per process
+const WARMUP_MS = 300; // and keep warming up until this much time has passed
 
 // ---------------------------------------------------------------------------
 // Libraries. Each adapter returns {add(fn) => Promise} or {runAll(fns) => Promise}.
@@ -32,6 +42,24 @@ const LIBS = {
 			return {add: fn => q.add(fn)};
 		};
 	},
+	...Object.fromEntries(
+		(process.env.CHIQQ_VARIANTS || '')
+			.split(',')
+			.filter(Boolean)
+			.map(pair => {
+				const [name, entry] = pair.split('=');
+				return [
+					`chiqq-${name}`,
+					async () => {
+						const {default: Chiqq} = await import(entry);
+						return c => {
+							const q = new Chiqq({concurrency: c});
+							return {add: fn => q.add(fn)};
+						};
+					},
+				];
+			})
+	),
 	'p-queue': async () => {
 		const {default: PQueue} = await import('p-queue');
 		return c => {
@@ -104,7 +132,7 @@ const SCENARIOS = {
 		n: 10_000,
 		concurrency: 1,
 		make: syncTask,
-		reps: 7,
+		reps: 15,
 	},
 	'sync-c16': {
 		title: '10k sync tasks, concurrency 16',
@@ -112,7 +140,7 @@ const SCENARIOS = {
 		n: 10_000,
 		concurrency: 16,
 		make: syncTask,
-		reps: 7,
+		reps: 15,
 	},
 	'async-c16': {
 		title: '10k async tasks (3 microtask hops), concurrency 16',
@@ -120,7 +148,7 @@ const SCENARIOS = {
 		n: 10_000,
 		concurrency: 16,
 		make: microTask,
-		reps: 7,
+		reps: 15,
 	},
 	'io-c64': {
 		title: '5k I/O-like tasks (setImmediate), concurrency 64',
@@ -128,7 +156,7 @@ const SCENARIOS = {
 		n: 5_000,
 		concurrency: 64,
 		make: ioTask,
-		reps: 5,
+		reps: 10,
 	},
 	'backlog-100k': {
 		title: '100k sync tasks queued at once, concurrency 16',
@@ -136,7 +164,7 @@ const SCENARIOS = {
 		n: 100_000,
 		concurrency: 16,
 		make: syncTask,
-		reps: 3,
+		reps: 5,
 		warmup: false,
 	},
 	'memory-100k': {
@@ -153,11 +181,14 @@ const SCENARIOS = {
 // ---------------------------------------------------------------------------
 
 const now = () => performance.now();
-const median = xs => {
+// Linear interpolation between closest ranks.
+const quantile = (xs, q) => {
 	const s = [...xs].sort((a, b) => a - b);
-	const m = s.length >> 1;
-	return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+	const pos = (s.length - 1) * q;
+	const lo = Math.floor(pos);
+	return s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (pos - lo);
 };
+const median = xs => quantile(xs, 0.5);
 
 function gc() {
 	if (typeof globalThis.Bun !== 'undefined') return globalThis.Bun.gc(true);
@@ -211,15 +242,28 @@ async function runCase(libName, scenarioName) {
 	const start = now();
 	const times = [];
 	if (sc.warmup !== false) {
-		const warm = await runOnce(factory, sc);
-		// Very slow libraries: one run is already a clear enough answer.
-		if (warm > CASE_BUDGET_MS / 4) times.push(warm);
+		// The JIT keeps tiering up for several runs, so warm up for a while.
+		for (let i = 0; i < WARMUP_RUNS || now() - start < WARMUP_MS; i++) {
+			const warm = await runOnce(factory, sc);
+			// Very slow libraries: one run is already a clear enough answer.
+			if (warm > CASE_BUDGET_MS / 4) {
+				times.push(warm);
+				break;
+			}
+		}
 	}
 	while (times.length < sc.reps && (times.length === 0 || now() - start < CASE_BUDGET_MS)) {
 		times.push(await runOnce(factory, sc));
 	}
+	return {times};
+}
+
+// Pools the samples of all processes of a case into one result.
+function summarize(times, n) {
 	const ms = median(times);
-	return {ms, opsPerSec: (sc.n / ms) * 1000, runs: times.length, min: Math.min(...times)};
+	// Half the interquartile range, relative to the median: "most runs are within +-x%".
+	const spread = (quantile(times, 0.75) - quantile(times, 0.25)) / 2 / ms;
+	return {ms, opsPerSec: (n / ms) * 1000, runs: times.length, spread};
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +306,20 @@ function argList(flag) {
 	return i > 0 ? process.argv[i + 1].split(',') : null;
 }
 
+// Runs a case in up to `procs` processes and pools the samples.
+function measureCase(rt, lib, sc, procs) {
+	const times = [];
+	for (let p = 0; p < procs; p++) {
+		const res = spawnCase(rt, lib, sc);
+		if (!res.times) return res;
+		times.push(...res.times);
+		if (median(times) > SLOW_MS) break;
+	}
+	return summarize(times, SCENARIOS[sc].n);
+}
+
 function libVersion(lib) {
+	if (lib.startsWith('chiqq-')) return 'variant';
 	if (lib === 'chiqq') {
 		return `${JSON.parse(readFileSync(join(here, '../../package.json'), 'utf8')).version} (src)`;
 	}
@@ -271,22 +328,15 @@ function libVersion(lib) {
 }
 
 const fmtMs = ms => (ms < 10 ? ms.toFixed(2) : ms < 100 ? ms.toFixed(1) : ms.toFixed(0));
-const fmtOps = ops =>
-	ops >= 1e6
-		? `${(ops / 1e6).toFixed(2)}M`
-		: ops >= 1e3
-			? `${(ops / 1e3).toFixed(0)}k`
-			: ops.toFixed(0);
-
 function cell(res, best, memory) {
 	if (!res) return '-';
 	if (res.timeout) return `timeout (>${CASE_TIMEOUT_MS / 1000}s)`;
 	if (res.error) return `error: ${res.error.slice(0, 40)}`;
 	if (res.skipped) return 'n/a';
 	if (memory) return `${Math.round(res.bytesPerTask)} B`;
-	const rel = res.ms / best;
-	const relTxt = rel < 1.005 ? '**fastest**' : `${rel.toFixed(1)}x`;
-	return `${fmtMs(res.ms)} ms (${fmtOps(res.opsPerSec)}/s) ${relTxt}`;
+	const rel = (res.ms / best).toFixed(2);
+	const relTxt = rel === '1.00' ? '**1.00x**' : `${rel}x`;
+	return `${relTxt} ${fmtMs(res.ms)} ms ±${Math.round(res.spread * 100)}%`;
 }
 
 async function orchestrate() {
@@ -297,13 +347,15 @@ async function orchestrate() {
 	});
 	const libs = argList('--libs') || Object.keys(LIBS);
 	const scenarios = argList('--scenarios') || Object.keys(SCENARIOS);
+	const procs = Number(argList('--procs')?.[0] || 3);
+	const outFile = argList('--out')?.[0] || join(here, 'results.md');
 	const results = {};
 
 	for (const sc of scenarios) {
 		for (const rt of runtimes) {
 			for (const lib of libs) {
 				process.stderr.write(`${sc.padEnd(14)} ${rt.padEnd(5)} ${lib.padEnd(13)} `);
-				const res = spawnCase(rt, lib, sc);
+				const res = SCENARIOS[sc].memory ? spawnCase(rt, lib, sc) : measureCase(rt, lib, sc, procs);
 				results[`${sc}|${rt}|${lib}`] = res;
 				process.stderr.write(
 					`${res.ms !== undefined ? `${fmtMs(res.ms)} ms` : res.bytesPerTask !== undefined ? `${Math.round(res.bytesPerTask)} B/task` : JSON.stringify(res)}\n`
@@ -322,7 +374,8 @@ async function orchestrate() {
 	out.push(`- Runtimes: ${runtimes.map(rt => `${rt} ${runtimeVersion(rt)}`).join(', ')}`);
 	out.push(`- Libraries: ${libs.map(l => `${l} ${libVersion(l)}`).join(', ')}`);
 	out.push(
-		'- Each case runs in a fresh process: 1 warmup run, then the median of up to N runs (capped at a 30s budget, a case is killed after 60s). Lower ms is better. `Nx` = times slower than the fastest library on that runtime.'
+		`- Each case runs in ${procs} fresh processes: ${WARMUP_RUNS}+ warmup runs (at least ${WARMUP_MS} ms) each, then up to N timed runs (capped at a ${CASE_BUDGET_MS / 1000}s budget per process, killed after ${CASE_TIMEOUT_MS / 1000}s). Cases slower than ${SLOW_MS / 1000}s get a single process.`,
+		'- Each cell: time relative to the fastest library on that runtime (**1.00x** is the fastest, lower is better), then the median time over all pooled runs, then the spread: half the interquartile range, so most runs land within that many percent of the median. Differences smaller than the spread are noise.'
 	);
 	out.push('');
 
@@ -343,8 +396,8 @@ async function orchestrate() {
 		out.push('');
 	}
 
-	writeFileSync(join(here, 'results.md'), out.join('\n'));
-	console.error(`\nwrote ${join(here, 'results.md')}`);
+	writeFileSync(outFile, out.join('\n'));
+	console.error(`\nwrote ${outFile}`);
 }
 
 if (process.argv[2] === '--case') {
