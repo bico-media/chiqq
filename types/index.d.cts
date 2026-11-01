@@ -50,6 +50,7 @@ export declare class Chiqq {
     private pendingRetry;
     private chained;
     private lastStart;
+    private timed;
     private delayTimer;
     constructor(conf?: Configuration);
     private retryDelay;
@@ -61,10 +62,11 @@ export declare class Chiqq {
     add<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
     /**
      * Adds a task at the front of the queue so it runs as soon as a slot is
-     * available, ahead of any tasks added before it. Thin proxy over `add()`
-     * with `addAsFirst: true`.
+     * available, ahead of any tasks added before it. Same as `add()` with
+     * `addAsFirst: true`.
      */
     addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T>;
+    private enqueue;
     pause(callback?: () => void): void;
     resume(): void;
     private hold;

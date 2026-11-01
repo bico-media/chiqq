@@ -1,42 +1,77 @@
 // src/index.ts
+class QueueItem {
+	task;
+	resolve;
+	reject;
+	conf;
+	promise;
+	retried = 0;
+	constructor(task, resolve, reject, conf, promise) {
+		this.task = task;
+		this.resolve = resolve;
+		this.reject = reject;
+		this.conf = conf;
+		this.promise = promise;
+	}
+}
+var nextResolve;
+var nextReject;
+var capture = (resolve, reject) => {
+	nextResolve = resolve;
+	nextReject = reject;
+};
+
 class TaskQueue {
-	items = [];
+	items = new Array(16);
+	mask = 15;
 	head = 0;
+	tail = 0;
 	get length() {
-		return this.items.length - this.head;
+		return this.tail - this.head;
 	}
 	push(item) {
-		this.items.push(item);
+		if (this.tail - this.head > this.mask)
+			this.grow();
+		this.items[this.tail++ & this.mask] = item;
 	}
 	unshift(item) {
-		if (this.head > 0) {
-			this.items[--this.head] = item;
-		} else {
-			this.items.unshift(item);
-		}
+		if (this.tail - this.head > this.mask)
+			this.grow();
+		this.items[--this.head & this.mask] = item;
 	}
 	peek() {
-		return this.items[this.head];
+		return this.head === this.tail ? undefined : this.items[this.head & this.mask];
 	}
 	shift() {
-		if (this.head === this.items.length)
+		if (this.head === this.tail)
 			return;
-		const item = this.items[this.head];
-		this.items[this.head++] = undefined;
-		if (this.head === this.items.length) {
-			this.items = [];
-			this.head = 0;
-		} else if (this.head > 1024 && this.head * 2 >= this.items.length) {
-			this.items = this.items.slice(this.head);
-			this.head = 0;
+		const slot = this.head++ & this.mask;
+		const item = this.items[slot];
+		this.items[slot] = undefined;
+		if (this.head === this.tail) {
+			this.head = this.tail = 0;
+			if (this.mask > 1023) {
+				this.items = new Array(16);
+				this.mask = 15;
+			}
 		}
 		return item;
 	}
 	drain() {
-		const items = this.items.slice(this.head);
-		this.items = [];
+		const out = [];
+		while (this.head !== this.tail)
+			out.push(this.shift());
+		return out;
+	}
+	grow() {
+		const len = this.tail - this.head;
+		const next = new Array(this.items.length * 2);
+		for (let i = 0;i < len; i++)
+			next[i] = this.items[this.head + i & this.mask];
+		this.items = next;
+		this.mask = next.length - 1;
 		this.head = 0;
-		return items;
+		this.tail = len;
 	}
 }
 
@@ -84,6 +119,7 @@ class Chiqq {
 	pendingRetry;
 	chained;
 	lastStart;
+	timed;
 	delayTimer;
 	constructor(conf = {}) {
 		this.conf = resolveConfig(conf, DEFAULTS);
@@ -99,6 +135,7 @@ class Chiqq {
 		this.pendingRetry = new Set;
 		this.chained = null;
 		this.lastStart = 0;
+		this.timed = this.conf.taskDelay > 0;
 		this.delayTimer = null;
 	}
 	retryDelay(conf, attempt) {
@@ -166,7 +203,8 @@ class Chiqq {
 		}
 		this.q.shift();
 		this.running++;
-		this.lastStart = Date.now();
+		if (this.timed)
+			this.lastStart = Date.now();
 		if (this.chained && !this.chained.held)
 			this.chained.hold();
 		this.run(payload);
@@ -196,25 +234,30 @@ class Chiqq {
 		this.postTaskCheck();
 		this.tick();
 	}
-	add(task, configObj = {}) {
+	add(task, configObj) {
+		return this.enqueue(task, configObj, !!configObj?.addAsFirst);
+	}
+	addNext(task, configObj) {
+		return this.enqueue(task, configObj, true);
+	}
+	enqueue(task, configObj, first) {
 		if (typeof task !== "function")
 			throw new Error("Please pass a function");
-		const conf = hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
-		let item;
-		const promise = new Promise((resolve, reject) => {
-			item = { task, resolve, reject, retried: 0, conf, promise: undefined };
-		});
-		item.promise = promise;
-		if (configObj.addAsFirst) {
+		const conf = configObj && hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
+		if (conf.taskDelay && !this.timed) {
+			this.timed = true;
+			if (this.running)
+				this.lastStart = Date.now();
+		}
+		const promise = new Promise(capture);
+		const item = new QueueItem(task, nextResolve, nextReject, conf, promise);
+		if (first) {
 			this.q.unshift(item);
 		} else {
 			this.q.push(item);
 		}
 		this.tick();
 		return promise;
-	}
-	addNext(task, configObj = {}) {
-		return this.add(task, { ...configObj, addAsFirst: true });
 	}
 	pause(callback) {
 		this.paused = true;
