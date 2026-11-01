@@ -22,14 +22,38 @@ interface ResolvedConfig {
 	retryFactor: number;
 }
 
-interface QueueItem<T = unknown> {
+// A class, not an object literal, so every item has the same shape from the start.
+class QueueItem<T = unknown> {
 	task: () => T | Promise<T>;
 	resolve: (value: T) => void;
 	reject: (reason?: unknown) => void;
-	retried: number;
 	conf: ResolvedConfig;
 	promise: Promise<T>;
+	retried = 0;
+
+	constructor(
+		task: () => T | Promise<T>,
+		resolve: (value: T) => void,
+		reject: (reason?: unknown) => void,
+		conf: ResolvedConfig,
+		promise: Promise<T>
+	) {
+		this.task = task;
+		this.resolve = resolve;
+		this.reject = reject;
+		this.conf = conf;
+		this.promise = promise;
+	}
 }
+
+// One shared promise executor instead of a new closure per task: it hands
+// resolve and reject over to add() through these two variables.
+let nextResolve: (value: never) => void;
+let nextReject: (reason?: unknown) => void;
+const capture = (resolve: (value: never) => void, reject: (reason?: unknown) => void) => {
+	nextResolve = resolve;
+	nextReject = reject;
+};
 
 interface PendingRetryEntry {
 	payload: QueueItem;
@@ -299,36 +323,48 @@ export class Chiqq {
 		this.tick();
 	}
 
-	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
+	add<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T> {
+		return this.enqueue(task, configObj, !!configObj?.addAsFirst);
+	}
+
+	/**
+	 * Adds a task at the front of the queue so it runs as soon as a slot is
+	 * available, ahead of any tasks added before it. Same as `add()` with
+	 * `addAsFirst: true`.
+	 */
+	addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T> {
+		return this.enqueue(task, configObj, true);
+	}
+
+	private enqueue<T>(
+		task: () => T | Promise<T>,
+		configObj: ConfigTask | undefined,
+		first: boolean
+	): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
-		const conf = hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
+		const conf =
+			configObj && hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
 		if (conf.taskDelay && !this.timed) {
 			// First task with a delay on this queue: earlier starts were not recorded,
 			// so space it from now if something is running.
 			this.timed = true;
 			if (this.running) this.lastStart = Date.now();
 		}
-		let item!: QueueItem<T>;
-		const promise = new Promise<T>((resolve, reject) => {
-			item = {task, resolve, reject, retried: 0, conf, promise: undefined as never};
-		});
-		item.promise = promise;
-		if (configObj.addAsFirst) {
-			this.q.unshift(item as QueueItem);
+		const promise = new Promise<T>(capture);
+		const item = new QueueItem<T>(
+			task,
+			nextResolve as (value: T) => void,
+			nextReject,
+			conf,
+			promise
+		) as QueueItem;
+		if (first) {
+			this.q.unshift(item);
 		} else {
-			this.q.push(item as QueueItem);
+			this.q.push(item);
 		}
 		this.tick();
 		return promise;
-	}
-
-	/**
-	 * Adds a task at the front of the queue so it runs as soon as a slot is
-	 * available, ahead of any tasks added before it. Thin proxy over `add()`
-	 * with `addAsFirst: true`.
-	 */
-	addNext<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
-		return this.add<T>(task, {...configObj, addAsFirst: true});
 	}
 
 	pause(callback?: () => void) {
