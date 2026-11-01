@@ -340,8 +340,7 @@ function cell(res, best, memory) {
 	if (res.skipped) return 'n/a';
 	if (memory) return `${Math.round(res.bytesPerTask)} B`;
 	const rel = (res.ms / best).toFixed(2);
-	const relTxt = rel === '1.00' ? '**1.00x**' : `${rel}x`;
-	return `${relTxt} ${fmtMs(res.ms)} ms ±${Math.round(res.spread * 100)}%`;
+	return `${rel}x ${fmtMs(res.ms)} ms ±${Math.round(res.spread * 100)}%`;
 }
 
 async function orchestrate() {
@@ -380,7 +379,7 @@ async function orchestrate() {
 	out.push(`- Libraries: ${libs.map(l => `${l} ${libVersion(l)}`).join(', ')}`);
 	out.push(
 		`- Each case runs in ${procs} fresh processes: ${WARMUP_RUNS}+ warmup runs (at least ${WARMUP_MS} ms) each, then up to N timed runs (capped at a ${CASE_BUDGET_MS / 1000}s budget per process, killed after ${CASE_TIMEOUT_MS / 1000}s). Cases slower than ${SLOW_MS / 1000}s get a single process.`,
-		'- Each cell: time relative to the fastest library on that runtime (**1.00x** is the fastest, lower is better), then the median time over all pooled runs, then the spread: half the interquartile range, so most runs land within that many percent of the median. Differences smaller than the spread are noise.'
+		'- Each cell: time relative to the fastest library on that runtime (1.00x is the fastest, 1.50x took one and a half times as long), then the median time over all pooled runs, then the spread: half the interquartile range, so most runs land within that many percent of the median. Differences smaller than the spread are noise.'
 	);
 	out.push('');
 
@@ -396,7 +395,7 @@ async function orchestrate() {
 		}
 		for (const lib of libs) {
 			const cells = runtimes.map(rt => cell(results[`${sc}|${rt}|${lib}`], best[rt], def.memory));
-			out.push(`| ${lib === 'chiqq' ? '**chiqq**' : lib} | ${cells.join(' | ')} |`);
+			out.push(`| ${lib} | ${cells.join(' | ')} |`);
 		}
 		out.push('');
 	}
