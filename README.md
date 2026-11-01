@@ -2,9 +2,11 @@
 
 Chiqq is an async task pool and queue manager built for high throughput with first-class TypeScript support. It was originally developed as an internal tool at Bico.Media to manage the flow of creating and distributing files as transactions. We're open-sourcing it because it's proven to be incredibly useful for turning chaotic asynchronous jobs into a calm, controlled process.
 
+It's small (about 8 kB, no dependencies) and fast: see [Performance](#performance) for how it compares to p-queue, p-limit, fastq and friends.
+
 ## Installation
 
-Chiqq is available on npm with zero dependencies.
+Chiqq is available on npm with zero dependencies. It runs on Node 18+, Bun, Deno and in the browser.
 
 ```bash
 bun add chiqq
@@ -42,6 +44,7 @@ const urls = [
 const promises = urls.map(url => {
 	return q.add(async () => {
 		const response = await fetch(url);
+		if (!response.ok) throw new Error(`${response.status} for ${url}`);
 		return [url, await response.json()];
 	});
 });
@@ -52,6 +55,8 @@ console.log(`Processed ${results.length} API calls`);
 ```
 
 In this example you queue up 1000s of requests but only up to 8 will run at any time. If a request fails, Chiqq will retry it up to 3 times with a 5 second cooldown.
+
+Chiqq retries when your task throws (or its promise rejects), so you decide what counts as a failure. That's why the example throws on a bad status code: `fetch()` only rejects on network errors, and a `500` would otherwise count as a success.
 
 ## Retry Logic
 
@@ -131,6 +136,19 @@ console.log(`Cancelled ${cancelled} pending tasks`);
 q.clear(true);
 ```
 
+To tell a cancelled task apart from one that failed, check for `ChiqqClearedError`:
+
+```typescript
+import Chiqq, { ChiqqClearedError } from 'chiqq';
+
+try {
+	await q.add(() => work());
+} catch (error) {
+	if (error instanceof ChiqqClearedError) return; // cancelled by clear(), not a real failure
+	throw error;
+}
+```
+
 ### Errors from tasks you don't await
 
 Like any promise, a rejected `add()` promise that nobody awaits or catches is an unhandled rejection, and Node exits on those. That includes tasks cancelled by `clear()`. If you fire and forget, register an error handler:
@@ -194,13 +212,15 @@ The returned promise may also resolve with `null` if the task was discarded via 
 
 If a slot is free, the task starts synchronously inside `add()`, before `add()` returns.
 
+`add()` throws right away (it does not return a rejected promise) if `task` is not a function.
+
 ### `addNext<T>(task, configObj?) => Promise<T>`
 
 Thin proxy over `add()` with `addAsFirst: true`. The task is placed at the front of the queue and runs as soon as a slot is free, ahead of anything queued before it.
 
 ### `pause(callback?)`
 
-Pauses queue processing. Currently running tasks will complete; no new tasks start. Retry cooldowns keep counting down while paused, but a retry whose cooldown ends waits at the front of the queue until you resume. The optional callback fires once when all running tasks have completed. Calling `pause()` again can replace the callback. Calling `resume()` will clear a pause callback.
+Pauses queue processing. Currently running tasks will complete; no new tasks start. Retry cooldowns keep counting down while paused, but a retry whose cooldown ends waits at the front of the queue until you resume. The optional callback fires once when all running tasks have completed. Calling `pause()` again replaces the callback, or removes it if you pass none. Calling `resume()` will clear a pause callback.
 
 ### `resume()`
 
@@ -251,7 +271,7 @@ Registers a one-shot callback that fires the next time the queue transitions to 
   config: {
     concurrency: number;
     taskDelay: number;
-    retry: { max: number; cooling: number; factor: number };
+    retry: { max: number; cooling: number; factor: number }; // max is -1 for 'retry forever'
   };
   tasks: {
     total: number;  // active + queued (pending retries are counted as queued)
@@ -261,9 +281,26 @@ Registers a one-shot callback that fires the next time the queue transitions to 
 }
 ```
 
-## Performance Considerations
+## Performance
 
-Chiqq is intentionally tiny and unopinionated, with no dependencies. Adding and starting a task is O(1), also for queues with hundreds of thousands of tasks. See `test/performance/results.md` for a comparison with p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno.
+Chiqq is intentionally tiny and unopinionated. Adding and starting a task is O(1), also for queues with hundreds of thousands of tasks, and it keeps less memory per waiting task than any of the other libraries we could measure.
+
+We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno. Here are the Node 24 numbers (milliseconds, lower is better):
+
+| Scenario | chiqq | p-queue | p-limit | fastq | async | promise-pool |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10k sync tasks, concurrency 1 | 6.5 | 22.3 | 7.6 | **5.3** | 6.6 | 9.6 |
+| 10k sync tasks, concurrency 16 | **3.8** | 20.0 | 6.6 | 4.9 | 5.3 | 6.5 |
+| 10k async tasks, concurrency 16 | **6.4** | 22.6 | 10.1 | 9.3 | 8.4 | 8.8 |
+| 5k I/O-like tasks, concurrency 64 | 10.0 | 16.5 | 10.4 | **7.8** | 8.8 | 81.7 |
+| 100k tasks queued at once | 121 | 380 | 129 | 116 | 87 | **58** |
+| Heap per waiting task (bytes) | **289** | 884 | 696 | 640 | 408 | n/a |
+
+To be frank about it: Chiqq is not the fastest at everything. fastq edges it out in a couple of cases, and promise-pool wins the big backlog because it walks a fixed array instead of keeping a real queue (so you can't add tasks while it runs). What you can count on is that Chiqq stays in the top group everywhere while also doing retries, pausing and priority chains. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.5 ms per task in these tests, so it isn't a fair fight.
+
+Also keep in mind that these numbers measure the queue itself. As soon as your tasks do real work (an HTTP call takes milliseconds, not microseconds), the queue overhead disappears in the noise for all of these libraries.
+
+The full results for all three runtimes are in [`test/performance/results.md`](test/performance/results.md). Run `test/performance/run.sh` to reproduce them on your own machine.
 
 ### Concurrency Tuning
 
@@ -296,7 +333,7 @@ Runs `yarn version`: checks for a clean tree, installs, typechecks, tests and lo
 
 ## Contributing
 
-Contributions are welcome. Please feel free to submit a pull request.
+Contributions are welcome. Please feel free to submit a pull request. For bigger changes, opening an issue first saves us both some time. Please add a test for what you change (one file per feature in `test/`), and run `bun test` and `bun run format` before you push. There is no linter, only the formatter.
 
 ## License
 
