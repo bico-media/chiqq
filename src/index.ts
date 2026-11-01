@@ -162,6 +162,8 @@ export class Chiqq {
 	private pendingRetry: Set<PendingRetryEntry>;
 	private chained: Chiqq | null;
 	private lastStart: number;
+	// Start times are only recorded once some task uses taskDelay, saving a Date.now() per task.
+	private timed: boolean;
 	private delayTimer: ReturnType<typeof setTimeout> | null;
 
 	constructor(conf: Configuration = {}) {
@@ -178,6 +180,7 @@ export class Chiqq {
 		this.pendingRetry = new Set();
 		this.chained = null;
 		this.lastStart = 0;
+		this.timed = this.conf.taskDelay > 0;
 		this.delayTimer = null;
 	}
 
@@ -258,7 +261,7 @@ export class Chiqq {
 
 		this.q.shift();
 		this.running++;
-		this.lastStart = Date.now();
+		if (this.timed) this.lastStart = Date.now();
 
 		// I have work, so hold my chained queue
 		if (this.chained && !this.chained.held) this.chained.hold();
@@ -299,6 +302,12 @@ export class Chiqq {
 	add<T = unknown>(task: () => T | Promise<T>, configObj: ConfigTask = {}): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
 		const conf = hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
+		if (conf.taskDelay && !this.timed) {
+			// First task with a delay on this queue: earlier starts were not recorded,
+			// so space it from now if something is running.
+			this.timed = true;
+			if (this.running) this.lastStart = Date.now();
+		}
 		let item!: QueueItem<T>;
 		const promise = new Promise<T>((resolve, reject) => {
 			item = {task, resolve, reject, retried: 0, conf, promise: undefined as never};

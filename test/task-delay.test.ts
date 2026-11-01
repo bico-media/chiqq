@@ -45,6 +45,33 @@ describe('taskDelay', () => {
 		expect(peak).toBe(2);
 	});
 
+	it('a per-task taskDelay on an idle queue starts right away', async () => {
+		const queue = new Chiqq();
+		await queue.add(() => 1);
+		const t0 = Date.now();
+		await queue.add(() => 2, {taskDelay: 200});
+		expect(Date.now() - t0).toBeLessThan(20);
+	});
+
+	it('a per-task taskDelay waits for the task that is already running', async () => {
+		const queue = new Chiqq({concurrency: 2});
+		const t0 = Date.now();
+		const first = queue.add(() => delay(100));
+		let startedAt = 0;
+		await queue.add(
+			() => {
+				startedAt = Date.now() - t0;
+			},
+			{taskDelay: 50}
+		);
+		expect(startedAt).toBeGreaterThanOrEqual(49);
+		// A later task without a delay is not held back.
+		const t1 = Date.now();
+		await queue.add(() => 3);
+		expect(Date.now() - t1).toBeLessThan(20);
+		await first;
+	});
+
 	it('clear() cancels a pending delayed start', async () => {
 		const queue = new Chiqq({taskDelay: 50});
 		let ran = 0;
