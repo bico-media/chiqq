@@ -2,7 +2,7 @@
 
 Chiqq is an async task pool and queue manager built for high throughput with first-class TypeScript support. It was originally developed as an internal tool at Bico.Media to manage the flow of creating and distributing files as transactions. We're open-sourcing it because it's proven to be incredibly useful for turning chaotic asynchronous jobs into a calm, controlled process.
 
-It's small (about 8 kB, no dependencies) and fast: see [Performance](#performance) for how it compares to p-queue, p-limit, fastq and friends.
+It's small (about 9 kB, no dependencies) and fast: see [Performance](#performance) for how it compares to p-queue, p-limit, fastq and friends.
 
 ## Installation
 
@@ -176,7 +176,7 @@ high.add(() => urgentWork());
 low.add(() => backgroundWork()); // waits for `high` to finish first
 ```
 
-Links are **forward-only** and compose to any depth. `chain()` returns the chained queue, so you can build a pipeline fluently:
+Links are forward-only and compose to any depth. `chain()` returns the chained queue, so you can build a pipeline fluently:
 
 ```typescript
 a.chain(b).chain(c).chain(d); // priority order: a -> b -> c -> d
@@ -184,7 +184,7 @@ a.chain(b).chain(c).chain(d); // priority order: a -> b -> c -> d
 
 Key behaviours:
 - When work arrives in an upstream queue, it holds all downstream queues. In-flight tasks will finish in the downstream queues. Notice how concurrency is maintained within each queue and NOT across all queues.
-- **Retries don't block the chain:** a task waiting out its retry cooldown does not hold the chain - the downstream runs during the gap and is held again when the retry fires.
+- Retries don't block the chain: a task waiting out its retry cooldown does not hold the chain - the downstream runs during the gap and is held again when the retry fires.
 - Signals flow downward, so resuming the top of the chain flows down to the first queue with tasks. Resuming a middle queue starts its tasks or passes the resume on as if it was the top of the chain.
 - A chain hold is separate from your own `pause()`: a downstream queue you paused yourself stays paused (and keeps its pause callback) when the upstream drains.
 - `chain()` throws if the link would create a cycle.
@@ -283,24 +283,26 @@ Registers a one-shot callback that fires the next time the queue transitions to 
 
 ## Performance
 
-Chiqq is intentionally tiny and unopinionated. Adding and starting a task is O(1), also for queues with hundreds of thousands of tasks, and it keeps less memory per waiting task than any of the other libraries we could measure.
+Chiqq is intentionally tiny and unopinionated. Adding and starting a task is O(1), also for queues with hundreds of thousands of tasks, and so is `addNext()`. It keeps less memory per waiting task than any of the other libraries we could measure.
 
-We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno. Here are the Node 24 numbers (milliseconds, lower is better):
+We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno. Here are the Node 24 numbers. The fastest library in each row is 1.00x, and the others show how long they took compared to it, so 2.00x took twice as long:
 
 | Scenario | chiqq | p-queue | p-limit | fastq | async | promise-pool |
 | --- | --- | --- | --- | --- | --- | --- |
-| 10k sync tasks, concurrency 1 | 6.5 | 22.3 | 7.6 | **5.3** | 6.6 | 9.6 |
-| 10k sync tasks, concurrency 16 | **3.8** | 20.0 | 6.6 | 4.9 | 5.3 | 6.5 |
-| 10k async tasks, concurrency 16 | **6.4** | 22.6 | 10.1 | 9.3 | 8.4 | 8.8 |
-| 5k I/O-like tasks, concurrency 64 | 10.0 | 16.5 | 10.4 | **7.8** | 8.8 | 81.7 |
-| 100k tasks queued at once | 121 | 380 | 129 | 116 | 87 | **58** |
-| Heap per waiting task (bytes) | **289** | 884 | 696 | 640 | 408 | n/a |
+| 10k sync tasks, concurrency 1 | 1.00x | 6.68x | 2.79x | 1.08x | 1.56x | 4.42x |
+| 10k sync tasks, concurrency 16 | 1.00x | 7.49x | 2.71x | 1.19x | 1.46x | 2.86x |
+| 10k async tasks, concurrency 16 | 1.00x | 5.24x | 2.36x | 1.23x | 1.40x | 2.07x |
+| 5k I/O-like tasks, concurrency 64 | 1.08x | 2.65x | 1.37x | 1.00x | 1.21x | 25.03x |
+| 100k tasks queued at once | 1.00x | 4.23x | 1.90x | 1.65x | 1.11x | 1.15x |
+| Heap per waiting task | 291 B | 884 B | 696 B | 640 B | 408 B | n/a |
 
-To be frank about it: Chiqq is not the fastest at everything. fastq edges it out in a couple of cases, and promise-pool wins the big backlog because it walks a fixed array instead of keeping a real queue (so you can't add tasks while it runs). What you can count on is that Chiqq stays in the top group everywhere while also doing retries, pausing and priority chains. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.5 ms per task in these tests, so it isn't a fair fight.
+Chiqq's own times for those rows were 1.78, 1.75, 3.23, 3.37 and 49 ms.
+
+Chiqq comes out fastest in every scenario on all three runtimes, with one exception, and we'd rather tell you about it: with I/O-like tasks on Node, Chiqq took 1.08x the time of fastq. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.5 ms per task in these tests, so it isn't a fair fight.
 
 Also keep in mind that these numbers measure the queue itself. As soon as your tasks do real work (an HTTP call takes milliseconds, not microseconds), the queue overhead disappears in the noise for all of these libraries.
 
-The full results for all three runtimes are in [`test/performance/results.md`](test/performance/results.md). Run `test/performance/run.sh` to reproduce them on your own machine.
+The full results for all three runtimes, with timings and how much they vary between runs, are in [`test/performance/results.md`](test/performance/results.md). Run `test/performance/run.sh` to reproduce them on your own machine.
 
 ### Concurrency Tuning
 
