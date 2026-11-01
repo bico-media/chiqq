@@ -11,6 +11,7 @@
 //
 //   CHIQQ_VARIANTS=fast=/abs/path/index.ts,ring=/abs/other.ts node run.js --libs chiqq,chiqq-fast,chiqq-ring
 //                                adds chiqq builds to compare against each other
+//   CHIQQ_ADD_ALL=1              time variants that have addAll() through it
 //
 // Every (runtime, lib, scenario) case runs in its own child processes so JIT state and
 // heap from one library cannot leak into the next measurement. Each case runs in several
@@ -54,6 +55,10 @@ const LIBS = {
 						const {default: Chiqq} = await import(entry);
 						return c => {
 							const q = new Chiqq({concurrency: c});
+							// A variant with addAll() is timed through it, like promise-pool.
+							if (process.env.CHIQQ_ADD_ALL && q.addAll) {
+								return {add: fn => q.add(fn), runAll: fns => q.addAll(fns)};
+							}
 							return {add: fn => q.add(fn)};
 						};
 					},
