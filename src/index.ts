@@ -304,15 +304,42 @@ export class Chiqq {
 		return true;
 	}
 
-	private async run(payload: QueueItem) {
-		const conf = payload.conf;
+	// Runs a task without an async function, with the same timing as
+	// `await payload.task()`: a throw is handled right away, a promise gets one
+	// .then(), and a plain value is wrapped up on the next microtask.
+	private run(payload: QueueItem) {
+		let result: unknown;
 		try {
-			const result = await payload.task();
-			this.running--;
-			payload.resolve(result);
+			result = payload.task();
 		} catch (e) {
-			this.running--;
+			this.settle(payload, false, e);
+			return;
+		}
+		let thenable: boolean;
+		try {
+			thenable = typeof (result as PromiseLike<unknown> | null)?.then === 'function';
+		} catch {
+			// A throwing `then` getter: Promise.resolve() rejects with it, like `await`.
+			thenable = true;
+		}
+		if (thenable) {
+			// Promise.resolve() returns a native promise as is, and adopts any
+			// other thenable the way `await` does.
+			Promise.resolve(result).then(
+				value => this.settle(payload, true, value),
+				error => this.settle(payload, false, error)
+			);
+		} else {
+			queueMicrotask(() => this.settle(payload, true, result));
+		}
+	}
 
+	private settle(payload: QueueItem, ok: boolean, value: unknown) {
+		this.running--;
+		if (ok) {
+			payload.resolve(value);
+		} else {
+			const conf = payload.conf;
 			if (conf.retryMax < 0 || payload.retried < conf.retryMax) {
 				payload.retried++;
 				const entry: PendingRetryEntry = {payload, timer: undefined as never};
@@ -326,7 +353,7 @@ export class Chiqq {
 				);
 				this.pendingRetry.add(entry);
 			} else {
-				this.fail(payload, e, true);
+				this.fail(payload, value, true);
 			}
 		}
 		this.postTaskCheck();
