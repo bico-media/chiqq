@@ -323,16 +323,18 @@ We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-p
 
 | Scenario | chiqq | p-queue | p-limit | fastq | async | promise-pool |
 | --- | --- | --- | --- | --- | --- | --- |
-| 10k sync tasks, concurrency 1 | 1.00x | 6.68x | 2.79x | 1.08x | 1.56x | 4.42x |
-| 10k sync tasks, concurrency 16 | 1.00x | 7.49x | 2.71x | 1.19x | 1.46x | 2.86x |
-| 10k async tasks, concurrency 16 | 1.00x | 5.24x | 2.36x | 1.23x | 1.40x | 2.07x |
-| 5k I/O-like tasks, concurrency 64 | 1.08x | 2.65x | 1.37x | 1.00x | 1.21x | 25.03x |
-| 100k tasks queued at once | 1.00x | 4.23x | 1.90x | 1.65x | 1.11x | 1.15x |
-| Heap per waiting task | 291 B | 884 B | 696 B | 640 B | 408 B | n/a |
+| 10k sync tasks, concurrency 1 | 1.00x | 7.81x | 2.94x | 1.27x | 1.84x | 4.77x |
+| 10k sync tasks, concurrency 16 | 1.00x | 8.25x | 3.15x | 1.26x | 1.54x | 3.07x |
+| 10k async tasks, concurrency 16 | 1.00x | 5.56x | 2.62x | 1.25x | 1.50x | 2.22x |
+| 5k I/O-like tasks, concurrency 64 | 1.00x | 3.25x | 1.57x | 1.17x | 1.30x | 29.89x |
+| 100k tasks queued at once | 1.00x | 7.21x | 2.73x | 2.59x | 1.81x | 1.79x |
+| Heap per waiting task | 291 B | 885 B | 696 B | 640 B | 408 B | n/a |
 
-Chiqq's own times for those rows were 1.78, 1.75, 3.23, 3.37 and 49 ms.
+Chiqq's own times for those rows were 1.53, 1.58, 3.07, 2.59 and 30 ms.
 
-Chiqq comes out fastest in every scenario on all three runtimes, with one exception, and we'd rather tell you about it: with I/O-like tasks on Node, Chiqq took 1.08x the time of fastq. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.5 ms per task in these tests, so it isn't a fair fight.
+Chiqq comes out fastest in every scenario on all three runtimes. The closest is fastq, which took 1.17x-1.27x the time of Chiqq on Node. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.8 ms per task in these tests, so it isn't a fair fight.
+
+All of those rows call `add()` once per task. Handing the same tasks over with `addAll()` is cheaper still: on Node the sync rows took about 0.49x the time of `add()`, the async and I/O rows 0.84x-0.86x, and the 100k backlog 0.41x.
 
 Also keep in mind that these numbers measure the queue itself. As soon as your tasks do real work (an HTTP call takes milliseconds, not microseconds), the queue overhead disappears in the noise for all of these libraries.
 
