@@ -77,15 +77,15 @@ function callSafe<A, B>(cb: (a: A, b: B) => void, a: A, b: B) {
 
 // Stand in for resolve and reject on items of a batch. Chiqq always calls them
 // as methods (item.resolve(value)), so `this` is the item.
-function batchResolve(this: QueueItem, value: unknown) {
-	const batch = this.batch as Batch;
+function batchResolve(this: BatchItem, value: unknown) {
+	const batch = this.batch;
 	batch.results[this.index] = value;
 	if (batch.onSuccess) callSafe(batch.onSuccess, value, this.index);
 	batch.finishOne();
 }
 
-function batchReject(this: QueueItem, reason: unknown) {
-	const batch = this.batch as Batch;
+function batchReject(this: BatchItem, reason: unknown) {
+	const batch = this.batch;
 	if (batch.onError) {
 		callSafe(batch.onError, reason, this.index);
 		batch.finishOne();
@@ -103,8 +103,6 @@ class QueueItem<T = unknown> {
 	conf: ResolvedConfig;
 	promise: Promise<T>;
 	retried = 0;
-	batch: Batch | null = null;
-	index = 0;
 
 	constructor(
 		task: () => T | Promise<T>,
@@ -118,6 +116,30 @@ class QueueItem<T = unknown> {
 		this.reject = reject;
 		this.conf = conf;
 		this.promise = promise;
+	}
+}
+
+// An item of an addAll() batch: the fields of QueueItem plus two of its own.
+// A separate class rather than a subclass, so items from add() don't carry the
+// extra fields, and without the cost of a super() call.
+class BatchItem {
+	task: () => unknown;
+	resolve: (value: unknown) => void;
+	reject: (reason?: unknown) => void;
+	conf: ResolvedConfig;
+	promise: Promise<unknown>;
+	retried = 0;
+	batch: Batch;
+	index: number;
+
+	constructor(task: () => unknown, conf: ResolvedConfig, batch: Batch, index: number) {
+		this.task = task;
+		this.resolve = batchResolve;
+		this.reject = batchReject;
+		this.conf = conf;
+		this.promise = batch.promise;
+		this.batch = batch;
+		this.index = index;
 	}
 }
 
@@ -480,9 +502,7 @@ export class Chiqq {
 		// With addAsFirst, add from the back so the batch keeps its order at the front.
 		for (let k = 0; k < n; k++) {
 			const i = first ? n - 1 - k : k;
-			const item = new QueueItem(tasks[i], batchResolve, batchReject, conf, batch.promise);
-			item.batch = batch;
-			item.index = i;
+			const item = new BatchItem(tasks[i], conf, batch, i);
 			if (first) {
 				this.q.unshift(item);
 			} else {
