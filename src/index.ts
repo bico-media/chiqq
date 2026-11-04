@@ -15,11 +15,84 @@ export interface ConfigTask {
 	addAsFirst?: boolean;
 }
 
+export interface ConfigBatch<T = unknown> extends ConfigTask {
+	/** Called each time a task of the batch succeeds, with its position in the array. */
+	onSuccess?: (value: T, index: number) => void;
+	/**
+	 * Called when a task of the batch fails after its last retry, or is cleared.
+	 * With this set, failures don't reject the batch: it resolves once every
+	 * task is done, with `undefined` at the failed positions.
+	 */
+	onError?: (error: unknown, index: number) => void;
+}
+
 interface ResolvedConfig {
 	taskDelay: number;
 	retryMax: number;
 	retryCooling: number;
 	retryFactor: number;
+}
+
+// Collects the results of addAll(): one promise for the whole batch.
+class Batch {
+	results: unknown[];
+	left: number;
+	done = false;
+	resolve!: (value: unknown[]) => void;
+	reject!: (reason?: unknown) => void;
+	promise: Promise<unknown[]>;
+	onSuccess: ((value: unknown, index: number) => void) | undefined;
+	onError: ((error: unknown, index: number) => void) | undefined;
+
+	constructor(n: number, conf: ConfigBatch | undefined) {
+		this.results = new Array(n);
+		this.left = n;
+		this.onSuccess = conf?.onSuccess;
+		this.onError = conf?.onError;
+		this.promise = new Promise((resolve, reject) => {
+			this.resolve = resolve;
+			this.reject = reject;
+		});
+	}
+
+	finishOne() {
+		if (--this.left === 0 && !this.done) {
+			this.done = true;
+			this.resolve(this.results);
+		}
+	}
+}
+
+// Calls a user callback without letting a throw stall the queue: the error is
+// rethrown on its own, like a throw from the onError() handler.
+function callSafe<A, B>(cb: (a: A, b: B) => void, a: A, b: B) {
+	try {
+		cb(a, b);
+	} catch (e) {
+		queueMicrotask(() => {
+			throw e;
+		});
+	}
+}
+
+// Stand in for resolve and reject on items of a batch. Chiqq always calls them
+// as methods (item.resolve(value)), so `this` is the item.
+function batchResolve(this: QueueItem, value: unknown) {
+	const batch = this.batch as Batch;
+	batch.results[this.index] = value;
+	if (batch.onSuccess) callSafe(batch.onSuccess, value, this.index);
+	batch.finishOne();
+}
+
+function batchReject(this: QueueItem, reason: unknown) {
+	const batch = this.batch as Batch;
+	if (batch.onError) {
+		callSafe(batch.onError, reason, this.index);
+		batch.finishOne();
+	} else if (!batch.done) {
+		batch.done = true;
+		batch.reject(reason);
+	}
 }
 
 // A class, not an object literal, so every item has the same shape from the start.
@@ -30,6 +103,8 @@ class QueueItem<T = unknown> {
 	conf: ResolvedConfig;
 	promise: Promise<T>;
 	retried = 0;
+	batch: Batch | null = null;
+	index = 0;
 
 	constructor(
 		task: () => T | Promise<T>,
@@ -373,12 +448,52 @@ export class Chiqq {
 		return this.enqueue(task, configObj, true);
 	}
 
-	private enqueue<T>(
-		task: () => T | Promise<T>,
-		configObj: ConfigTask | undefined,
-		first: boolean
-	): Promise<T> {
-		if (typeof task !== 'function') throw new Error('Please pass a function');
+	/**
+	 * Adds many tasks with one promise for the whole batch, which resolves with
+	 * the results in the same order as `tasks`. Cheaper than calling `add()` for
+	 * each task. Every task still retries on its own.
+	 *
+	 * Without `onError`, the batch rejects with the first error that survives
+	 * its retries, like `Promise.all()`. The other tasks keep running. With
+	 * `onError`, every failure goes there instead and the batch always resolves.
+	 */
+	addAll<T = unknown>(
+		tasks: readonly (() => T | Promise<T>)[],
+		configObj: ConfigBatch<T> & {onError: (error: unknown, index: number) => void}
+	): Promise<(T | undefined)[]>;
+	addAll<T = unknown>(
+		tasks: readonly (() => T | Promise<T>)[],
+		configObj?: ConfigBatch<T>
+	): Promise<T[]>;
+	addAll<T = unknown>(
+		tasks: readonly (() => T | Promise<T>)[],
+		configObj?: ConfigBatch<T>
+	): Promise<(T | undefined)[]> {
+		for (const task of tasks) {
+			if (typeof task !== 'function') throw new Error('Please pass a function');
+		}
+		const conf = this.taskConf(configObj);
+		const n = tasks.length;
+		const batch = new Batch(n, configObj as ConfigBatch | undefined);
+		if (n === 0) batch.resolve([]);
+		const first = !!configObj?.addAsFirst;
+		// With addAsFirst, add from the back so the batch keeps its order at the front.
+		for (let k = 0; k < n; k++) {
+			const i = first ? n - 1 - k : k;
+			const item = new QueueItem(tasks[i], batchResolve, batchReject, conf, batch.promise);
+			item.batch = batch;
+			item.index = i;
+			if (first) {
+				this.q.unshift(item);
+			} else {
+				this.q.push(item);
+			}
+		}
+		while (this.tick()) {}
+		return batch.promise as Promise<T[]>;
+	}
+
+	private taskConf(configObj: ConfigTask | undefined): ResolvedConfig {
 		const conf =
 			configObj && hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
 		if (conf.taskDelay && !this.timed) {
@@ -387,6 +502,16 @@ export class Chiqq {
 			this.timed = true;
 			if (this.running) this.lastStart = Date.now();
 		}
+		return conf;
+	}
+
+	private enqueue<T>(
+		task: () => T | Promise<T>,
+		configObj: ConfigTask | undefined,
+		first: boolean
+	): Promise<T> {
+		if (typeof task !== 'function') throw new Error('Please pass a function');
+		const conf = this.taskConf(configObj);
 		const promise = new Promise<T>(capture);
 		const item = new QueueItem<T>(
 			task,

@@ -9,7 +9,12 @@ assert.equal(Named, Chiqq);
 assert.equal(typeof ChiqqClearedError, 'function');
 
 const q = new Chiqq({concurrency: 2});
-Promise.all([1, 2, 3].map(n => q.add(async () => n * 2))).then(results => {
-	assert.deepEqual(results, [2, 4, 6]);
-	console.log('cjs ok');
-});
+Promise.all([1, 2, 3].map(n => q.add(async () => n * 2)))
+	.then(results => {
+		assert.deepEqual(results, [2, 4, 6]);
+		return q.addAll([() => 1, async () => 2]);
+	})
+	.then(results => {
+		assert.deepEqual(results, [1, 2]);
+		console.log('cjs ok');
+	});

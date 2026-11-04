@@ -58,6 +58,25 @@ In this example you queue up 1000s of requests but only up to 8 will run at any 
 
 Chiqq retries when your task throws (or its promise rejects), so you decide what counts as a failure. That's why the example throws on a bad status code: `fetch()` only rejects on network errors, and a `500` would otherwise count as a success.
 
+### A whole batch at once
+
+If you have the tasks up front and only need the results at the end, hand them over with `addAll()`. You get one promise for the batch instead of one per task, which is less work for Chiqq. Every task still retries on its own.
+
+```typescript
+let done = 0;
+
+const results = await q.addAll(
+	urls.map(url => () => fetchJson(url)), // fetch plus the status check from above
+	{
+		onSuccess: (data, index) => console.log(`${++done}/${urls.length} done`),
+		onError: (error, index) => log.warn(`${urls[index]} failed after its retries`, error),
+	}
+);
+// results[i] belongs to urls[i], and is undefined where the task failed
+```
+
+Without `onError`, the batch rejects with the first error that survives its retries, just like `Promise.all()`. The other tasks keep running. With `onError`, every failure goes there and the batch always resolves once all tasks are done.
+
 ## Retry Logic
 
 Chiqq can automatically retry failed tasks with configurable cooling and exponential backoff.
@@ -217,6 +236,21 @@ If a slot is free, the task starts synchronously inside `add()`, before `add()` 
 ### `addNext<T>(task, configObj?) => Promise<T>`
 
 Thin proxy over `add()` with `addAsFirst: true`. The task is placed at the front of the queue and runs as soon as a slot is free, ahead of anything queued before it.
+
+### `addAll<T>(tasks, configObj?) => Promise<T[]>`
+
+Adds an array of tasks and returns one promise that resolves with their results, in the same order as `tasks`. Cheaper than calling `add()` for each task, and every task still retries on its own.
+
+`configObj` (`ConfigBatch`) takes the same options as `add()`, applied to every task of the batch, plus:
+
+| Property  | Type                              | Description |
+| ---       | ---                               | --- |
+| onSuccess | `(value: T, index: number) => void` | Called each time a task succeeds. Handy for progress reports. |
+| onError   | `(error, index: number) => void`  | Called when a task fails after its last retry, or is cleared. With it set, the batch never rejects and resolves with `undefined` at the failed positions (the return type is then `Promise<(T \| undefined)[]>`). |
+
+Without `onError`, the batch rejects with the first final error, like `Promise.all()`, and `clear()` rejects it with a `ChiqqClearedError`. The other tasks keep running. With `clear(true)`, cleared tasks give `null` at their positions. The queue-level `onError()` handler still hears about every failure. A callback that throws doesn't stall the queue: the error is rethrown on its own, like a throwing `onError()` handler.
+
+With `addAsFirst: true`, the batch goes to the front of the queue and keeps its own order there. `addAll()` throws right away, before adding anything, if one of the tasks is not a function.
 
 ### `pause(callback?)`
 
