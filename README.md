@@ -124,7 +124,7 @@ await queue.add(async () => doWork(), { retryCooling: 500 });
 await queue.addNext(async () => urgentWork());
 
 // Current queue status
-console.log(`Active ${queue.active}/${queue.concurrency}, queued ${queue.queued}`);
+console.log(`Active ${queue.active}/${queue.concurrency}, waiting ${queue.size}`);
 const s = queue.status(); // everything at once, as a ChiqqStatus object
 ```
 
@@ -293,7 +293,7 @@ Registers a one-shot callback that fires the next time the queue transitions to 
 | ---           | ---     | --- |
 | `concurrency` | number  | Current concurrency limit |
 | `active`      | number  | Tasks running right now |
-| `queued`      | number  | Tasks waiting to start, including tasks waiting to be retried |
+| `size`        | number  | Tasks waiting to start, including tasks waiting to be retried |
 | `isPaused`    | boolean | Paused by `pause()` or held by an upstream queue in a chain |
 | `isIdle`      | boolean | Nothing running, queued or waiting to be retried |
 

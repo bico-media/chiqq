@@ -694,7 +694,7 @@ export class Chiqq {
 	}
 
 	/** Number of tasks waiting to start, including tasks waiting to be retried. */
-	get queued(): number {
+	get size(): number {
 		return this.q.length + this.pendingRetry.size;
 	}
 
