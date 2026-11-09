@@ -219,19 +219,25 @@ class TaskQueue<T> {
 }
 
 export interface ChiqqStatus {
+	/** Paused by `pause()` or held by an upstream queue in a chain. */
 	isPaused: boolean;
+	/** Nothing running, waiting or waiting to be retried. */
+	isIdle: boolean;
 	config: {
 		concurrency: number;
 		taskDelay: number;
+		/** max is -1 when retrying forever. */
 		retry: {max: number; cooling: number; factor: number};
 	};
 	tasks: {
-		/** active + queued */
+		/** active + size */
 		total: number;
-		/** currently running */
+		/** running right now */
 		active: number;
-		/** waiting to start, including tasks waiting to be retried */
-		queued: number;
+		/** waiting to start, including pendingRetry */
+		size: number;
+		/** waiting out a retry cooldown before they try again */
+		pendingRetry: number;
 	};
 }
 
@@ -290,7 +296,7 @@ export class Chiqq {
 	private completeCallback: (() => void) | null;
 	private errorCallback: ((error: unknown) => void) | null;
 	private idleWaiters: (() => void)[];
-	private pendingRetry: Set<PendingRetryEntry>;
+	private retryTimers: Set<PendingRetryEntry>;
 	private chained: Chiqq | null;
 	private lastStart: number;
 	// Start times are only recorded once some task uses taskDelay, saving a Date.now() per task.
@@ -308,7 +314,7 @@ export class Chiqq {
 		this.completeCallback = null;
 		this.errorCallback = null;
 		this.idleWaiters = [];
-		this.pendingRetry = new Set();
+		this.retryTimers = new Set();
 		this.chained = null;
 		this.lastStart = 0;
 		this.timed = this.conf.taskDelay > 0;
@@ -343,7 +349,7 @@ export class Chiqq {
 	}
 
 	private isDrained(): boolean {
-		return this.running === 0 && this.q.length === 0 && this.pendingRetry.size === 0;
+		return this.running === 0 && this.q.length === 0 && this.retryTimers.size === 0;
 	}
 
 	private postTaskCheck() {
@@ -442,13 +448,13 @@ export class Chiqq {
 				const entry: PendingRetryEntry = {payload, timer: undefined as never};
 				entry.timer = setTimeout(
 					() => {
-						this.pendingRetry.delete(entry);
+						this.retryTimers.delete(entry);
 						this.q.unshift(payload);
 						this.tick();
 					},
 					this.retryDelay(conf, payload.retried)
 				);
-				this.pendingRetry.add(entry);
+				this.retryTimers.add(entry);
 			} else {
 				this.fail(payload, value, true);
 			}
@@ -634,8 +640,8 @@ export class Chiqq {
 			clearTimeout(this.delayTimer);
 			this.delayTimer = null;
 		}
-		const retries = Array.from(this.pendingRetry);
-		this.pendingRetry.clear();
+		const retries = Array.from(this.retryTimers);
+		this.retryTimers.clear();
 		for (const entry of retries) clearTimeout(entry.timer);
 
 		const all = [...queued, ...retries.map(e => e.payload)];
@@ -695,7 +701,37 @@ export class Chiqq {
 
 	/** Number of tasks waiting to start, including tasks waiting to be retried. */
 	get size(): number {
-		return this.q.length + this.pendingRetry.size;
+		return this.q.length + this.retryTimers.size;
+	}
+
+	/** Number of failed tasks waiting out their retry cooldown before they try again. */
+	get pendingRetry(): number {
+		return this.retryTimers.size;
+	}
+
+	/** Running plus waiting tasks: `active + size`. */
+	get total(): number {
+		return this.running + this.q.length + this.retryTimers.size;
+	}
+
+	/** Minimum time between task starts (ms). */
+	get taskDelay(): number {
+		return this.conf.taskDelay;
+	}
+
+	/** Maximum retries per task. -1 means retry forever. */
+	get retryMax(): number {
+		return this.conf.retryMax;
+	}
+
+	/** Base delay before a retry (ms). */
+	get retryCooling(): number {
+		return this.conf.retryCooling;
+	}
+
+	/** Growth factor of the retry delay. 1 or less means a constant delay. */
+	get retryFactor(): number {
+		return this.conf.retryFactor;
 	}
 
 	/** True when paused by `pause()` or held by an upstream queue in a chain. */
@@ -711,6 +747,7 @@ export class Chiqq {
 	status(): ChiqqStatus {
 		return {
 			isPaused: this.paused || this.held,
+			isIdle: this.isDrained(),
 			config: {
 				concurrency: this.limit,
 				taskDelay: this.conf.taskDelay,
@@ -721,9 +758,10 @@ export class Chiqq {
 				},
 			},
 			tasks: {
-				total: this.q.length + this.running + this.pendingRetry.size,
+				total: this.running + this.q.length + this.retryTimers.size,
 				active: this.running,
-				queued: this.q.length + this.pendingRetry.size,
+				size: this.q.length + this.retryTimers.size,
+				pendingRetry: this.retryTimers.size,
 			},
 		};
 	}

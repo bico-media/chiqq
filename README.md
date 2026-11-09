@@ -124,7 +124,7 @@ await queue.add(async () => doWork(), { retryCooling: 500 });
 await queue.addNext(async () => urgentWork());
 
 // Current queue status
-console.log(`Active ${queue.active}/${queue.concurrency}, waiting ${queue.size}`);
+console.log(`Active ${queue.active}/${queue.concurrency}, waiting ${queue.size}, of those ${queue.pendingRetry} to retry`);
 const s = queue.status(); // everything at once, as a ChiqqStatus object
 ```
 
@@ -289,30 +289,34 @@ Registers a one-shot callback that fires the next time the queue transitions to 
 
 ### Getters
 
-| Getter        | Type    | Description |
-| ---           | ---     | --- |
-| `concurrency` | number  | Current concurrency limit |
-| `active`      | number  | Tasks running right now |
-| `size`        | number  | Tasks waiting to start, including tasks waiting to be retried |
-| `isPaused`    | boolean | Paused by `pause()` or held by an upstream queue in a chain |
-| `isIdle`      | boolean | Nothing running, queued or waiting to be retried |
+Every value has one name. A setting reads back under the name of its constructor option, and `status()` holds the same values in two groups.
+
+| Getter          | Type    | In `status()`          | Description |
+| ---             | ---     | ---                    | --- |
+| `isPaused`      | boolean | `isPaused`             | Paused by `pause()` or held by an upstream queue in a chain |
+| `isIdle`        | boolean | `isIdle`               | Nothing running, waiting or waiting to be retried |
+| `concurrency`   | number  | `config.concurrency`   | Maximum tasks running at once. Change it with `setConcurrency()` |
+| `taskDelay`     | number  | `config.taskDelay`     | Minimum time between task starts (ms) |
+| `retryMax`      | number  | `config.retry.max`     | Maximum retries per task, `-1` for retry forever |
+| `retryCooling`  | number  | `config.retry.cooling` | Base delay before a retry (ms) |
+| `retryFactor`   | number  | `config.retry.factor`  | Growth factor of the retry delay |
+| `total`         | number  | `tasks.total`          | `active + size` |
+| `active`        | number  | `tasks.active`         | Tasks running right now |
+| `size`          | number  | `tasks.size`           | Tasks waiting to start, including `pendingRetry` |
+| `pendingRetry`  | number  | `tasks.pendingRetry`   | Failed tasks waiting out their cooldown before they try again |
 
 ### `status() => ChiqqStatus`
 
+All of the above in one object, handy for logging:
+
 ```typescript
-{
-  isPaused: boolean;
-  config: {
-    concurrency: number;
-    taskDelay: number;
-    retry: { max: number; cooling: number; factor: number }; // max is -1 for 'retry forever'
-  };
-  tasks: {
-    total: number;  // active + queued (pending retries are counted as queued)
-    active: number; // currently active tasks running
-    queued: number; // waiting to start, including tasks waiting to be retried
-  };
-}
+q.status();
+// {
+//   isPaused: false,
+//   isIdle: false,
+//   config: { concurrency: 8, taskDelay: 0, retry: { max: 3, cooling: 5000, factor: 2 } },
+//   tasks: { total: 42, active: 8, size: 34, pendingRetry: 1 },
+// }
 ```
 
 ## Performance

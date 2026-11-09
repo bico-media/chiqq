@@ -11,7 +11,7 @@ describe('Chiqq.clear()', () => {
 
 		const cleared = queue.clear();
 		expect(cleared).toBe(3);
-		expect(queue.status().tasks.queued).toBe(0);
+		expect(queue.status().tasks.size).toBe(0);
 
 		await expect(a).rejects.toBeInstanceOf(ChiqqClearedError);
 		await expect(b).rejects.toBeInstanceOf(ChiqqClearedError);
@@ -59,7 +59,7 @@ describe('Chiqq.clear()', () => {
 		});
 
 		await new Promise(r => setTimeout(r, 20));
-		expect(queue.status().tasks.queued).toBe(1);
+		expect(queue.status().tasks.size).toBe(1);
 
 		expect(queue.clear(true)).toBe(1);
 		expect(await failing).toBeNull();
@@ -77,12 +77,12 @@ describe('Chiqq.clear()', () => {
 		// Wait for first attempt to fail and the retry timer to be scheduled.
 		await new Promise(r => setTimeout(r, 20));
 		// Pending retries are reported as queued.
-		expect(queue.status().tasks.queued).toBe(1);
+		expect(queue.status().tasks.size).toBe(1);
 		expect(queue.status().tasks.active).toBe(0);
 
 		expect(queue.clear()).toBe(1);
 		await expect(failing).rejects.toBeInstanceOf(ChiqqClearedError);
-		expect(queue.status().tasks.queued).toBe(0);
+		expect(queue.status().tasks.size).toBe(0);
 
 		// Verify no further attempts happen after clear.
 		const before = attempts;

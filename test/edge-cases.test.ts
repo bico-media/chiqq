@@ -18,7 +18,7 @@ describe('Chiqq Edge Cases', () => {
 
 		// Nothing has run yet.
 		expect(order).toEqual([]);
-		expect(queue.status().tasks.queued).toBe(3);
+		expect(queue.status().tasks.size).toBe(3);
 
 		queue.resume();
 		await Promise.all([pA, pB, pC]);
@@ -111,7 +111,7 @@ describe('Chiqq Edge Cases', () => {
 
 		let snapshot = queue.status();
 		expect(snapshot.isPaused).toBe(true);
-		expect(snapshot.tasks.queued).toBe(3);
+		expect(snapshot.tasks.size).toBe(3);
 		expect(snapshot.tasks.active).toBe(0);
 
 		queue.resume();
@@ -121,13 +121,13 @@ describe('Chiqq Edge Cases', () => {
 		snapshot = queue.status();
 		expect(snapshot.isPaused).toBe(false);
 		expect(snapshot.tasks.active).toBe(1);
-		expect(snapshot.tasks.queued).toBe(2);
+		expect(snapshot.tasks.size).toBe(2);
 
 		await Promise.all(promises);
 
 		snapshot = queue.status();
 		expect(snapshot.tasks.active).toBe(0);
-		expect(snapshot.tasks.queued).toBe(0);
+		expect(snapshot.tasks.size).toBe(0);
 	});
 
 	it('paused: true at construct time blocks tasks until resume()', async () => {
@@ -142,7 +142,7 @@ describe('Chiqq Edge Cases', () => {
 		// Plenty of time for it to start, if it were going to.
 		await new Promise(resolve => setTimeout(resolve, 30));
 		expect(started).toBe(false);
-		expect(queue.status().tasks.queued).toBe(1);
+		expect(queue.status().tasks.size).toBe(1);
 
 		queue.resume();
 		const result = await task;
