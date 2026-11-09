@@ -2,22 +2,22 @@ import {describe, expect, it} from 'bun:test';
 import Chiqq from '../src/index';
 
 describe('Status getters', () => {
-	it('reports active, size and isIdle', async () => {
+	it('reports active, queued and isIdle', async () => {
 		const queue = new Chiqq({concurrency: 2});
 		expect(queue.isIdle).toBe(true);
 		const gate = Promise.withResolvers<void>();
 		const promises = Array.from({length: 5}, () => queue.add(() => gate.promise));
 		expect(queue.active).toBe(2);
-		expect(queue.size).toBe(3);
+		expect(queue.queued).toBe(3);
 		expect(queue.isIdle).toBe(false);
 		gate.resolve();
 		await Promise.all(promises);
 		expect(queue.active).toBe(0);
-		expect(queue.size).toBe(0);
+		expect(queue.queued).toBe(0);
 		expect(queue.isIdle).toBe(true);
 	});
 
-	it('counts pending retries in size and pendingRetry', async () => {
+	it('counts pending retries in queued and pendingRetry', async () => {
 		const queue = new Chiqq({retryMax: 1, retryCooling: 20});
 		let attempts = 0;
 		const p = queue.add(() => {
@@ -26,7 +26,7 @@ describe('Status getters', () => {
 		await null;
 		await null;
 		expect(queue.active).toBe(0);
-		expect(queue.size).toBe(1);
+		expect(queue.queued).toBe(1);
 		expect(queue.pendingRetry).toBe(1);
 		expect(queue.total).toBe(1);
 		await p;
@@ -37,7 +37,7 @@ describe('Status getters', () => {
 		const queue = new Chiqq({concurrency: 2});
 		for (let i = 0; i < 5; i++) queue.add(() => new Promise(() => {}));
 		expect(queue.active).toBe(2);
-		expect(queue.size).toBe(3);
+		expect(queue.queued).toBe(3);
 		expect(queue.total).toBe(5);
 	});
 
@@ -70,7 +70,7 @@ describe('Status getters', () => {
 			tasks: {
 				total: queue.total,
 				active: queue.active,
-				size: queue.size,
+				queued: queue.queued,
 				pendingRetry: queue.pendingRetry,
 			},
 		});

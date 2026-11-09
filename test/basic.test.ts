@@ -13,7 +13,7 @@ describe('Chiqq Basic Functionality', () => {
 		expect(status.config.retry.cooling).toBe(50);
 		expect(status.config.retry.factor).toBe(0);
 		expect(status.tasks.active).toBe(0);
-		expect(status.tasks.size).toBe(0);
+		expect(status.tasks.queued).toBe(0);
 	});
 
 	it('should create a queue with custom configuration', () => {

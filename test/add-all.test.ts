@@ -45,7 +45,7 @@ describe('addAll()', () => {
 		const queue = new Chiqq({paused: true});
 		const tasks = [() => 1, 'nope' as unknown as () => number];
 		expect(() => queue.addAll(tasks)).toThrow('Please pass a function');
-		expect(queue.size).toBe(0);
+		expect(queue.queued).toBe(0);
 	});
 
 	it('retries each task on its own', async () => {

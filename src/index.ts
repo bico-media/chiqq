@@ -230,12 +230,12 @@ export interface ChiqqStatus {
 		retry: {max: number; cooling: number; factor: number};
 	};
 	tasks: {
-		/** active + size */
+		/** active + queued */
 		total: number;
 		/** running right now */
 		active: number;
 		/** waiting to start, including pendingRetry */
-		size: number;
+		queued: number;
 		/** waiting out a retry cooldown before they try again */
 		pendingRetry: number;
 	};
@@ -700,7 +700,7 @@ export class Chiqq {
 	}
 
 	/** Number of tasks waiting to start, including tasks waiting to be retried. */
-	get size(): number {
+	get queued(): number {
 		return this.q.length + this.retryTimers.size;
 	}
 
@@ -709,7 +709,7 @@ export class Chiqq {
 		return this.retryTimers.size;
 	}
 
-	/** Running plus waiting tasks: `active + size`. */
+	/** Running plus waiting tasks: `active + queued`. */
 	get total(): number {
 		return this.running + this.q.length + this.retryTimers.size;
 	}
@@ -760,7 +760,7 @@ export class Chiqq {
 			tasks: {
 				total: this.running + this.q.length + this.retryTimers.size,
 				active: this.running,
-				size: this.q.length + this.retryTimers.size,
+				queued: this.q.length + this.retryTimers.size,
 				pendingRetry: this.retryTimers.size,
 			},
 		};

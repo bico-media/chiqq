@@ -124,7 +124,7 @@ await queue.add(async () => doWork(), { retryCooling: 500 });
 await queue.addNext(async () => urgentWork());
 
 // Current queue status
-console.log(`Active ${queue.active}/${queue.concurrency}, waiting ${queue.size}, of those ${queue.pendingRetry} to retry`);
+console.log(`Active ${queue.active}/${queue.concurrency}, queued ${queue.queued}, of those ${queue.pendingRetry} to retry`);
 const s = queue.status(); // everything at once, as a ChiqqStatus object
 ```
 
@@ -300,9 +300,9 @@ Every value has one name. A setting reads back under the name of its constructor
 | `retryMax`      | number  | `config.retry.max`     | Maximum retries per task, `-1` for retry forever |
 | `retryCooling`  | number  | `config.retry.cooling` | Base delay before a retry (ms) |
 | `retryFactor`   | number  | `config.retry.factor`  | Growth factor of the retry delay |
-| `total`         | number  | `tasks.total`          | `active + size` |
+| `total`         | number  | `tasks.total`          | `active + queued` |
 | `active`        | number  | `tasks.active`         | Tasks running right now |
-| `size`          | number  | `tasks.size`           | Tasks waiting to start, including `pendingRetry` |
+| `queued`        | number  | `tasks.queued`         | Tasks waiting to start, including `pendingRetry` |
 | `pendingRetry`  | number  | `tasks.pendingRetry`   | Failed tasks waiting out their cooldown before they try again |
 
 ### `status() => ChiqqStatus`
@@ -315,7 +315,7 @@ q.status();
 //   isPaused: false,
 //   isIdle: false,
 //   config: { concurrency: 8, taskDelay: 0, retry: { max: 3, cooling: 5000, factor: 2 } },
-//   tasks: { total: 42, active: 8, size: 34, pendingRetry: 1 },
+//   tasks: { total: 42, active: 8, queued: 34, pendingRetry: 1 },
 // }
 ```
 

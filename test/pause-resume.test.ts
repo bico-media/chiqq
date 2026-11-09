@@ -217,6 +217,6 @@ describe('Chiqq Pause and Resume', () => {
 		expect(status.config.concurrency).toBe(3);
 		expect(status.tasks.total).toBe(0);
 		expect(status.tasks.active).toBe(0);
-		expect(status.tasks.size).toBe(0);
+		expect(status.tasks.queued).toBe(0);
 	});
 });
