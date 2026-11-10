@@ -647,7 +647,11 @@ export class Chiqq {
 
 		const all = [...queued, ...retries.map(e => e.payload)];
 		for (const item of all) {
-			if (silent) {
+			if (silent && item instanceof BatchItem) {
+				// The task never ran, so it gets null in the results but no onSuccess.
+				item.batch.results[item.index] = null;
+				item.batch.finishOne();
+			} else if (silent) {
 				item.resolve(null as never);
 			} else {
 				this.fail(item, new ChiqqClearedError(), false);

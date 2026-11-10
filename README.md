@@ -248,7 +248,7 @@ Adds an array of tasks and returns one promise that resolves with their results,
 | onSuccess | `(value: T, index: number) => void` | Called each time a task succeeds. Handy for progress reports. |
 | onError   | `(error, index: number) => void`  | Called when a task fails after its last retry, or is cleared. With it set, the batch never rejects and resolves with `undefined` at the failed positions (the return type is then `Promise<(T \| undefined)[]>`). |
 
-Without `onError`, the batch rejects with the first final error, like `Promise.all()`, and `clear()` rejects it with a `ChiqqClearedError`. The other tasks keep running. With `clear(true)`, cleared tasks give `null` at their positions. The queue-level `onError()` handler still hears about every failure. A callback that throws doesn't stall the queue: the error is rethrown on its own, like a throwing `onError()` handler.
+Without `onError`, the batch rejects with the first final error, like `Promise.all()`, and `clear()` rejects it with a `ChiqqClearedError`. The other tasks keep running. With `clear(true)`, cleared tasks give `null` at their positions, and `onSuccess` is not called for them. The queue-level `onError()` handler still hears about every failure. A callback that throws doesn't stall the queue: the error is rethrown on its own, like a throwing `onError()` handler.
 
 With `addAsFirst: true`, the batch goes to the front of the queue and keeps its own order there. `addAll()` throws right away, before adding anything, if one of the tasks is not a function.
 

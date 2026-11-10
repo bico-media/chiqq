@@ -181,10 +181,12 @@ describe('addAll()', () => {
 		expect(errors[0][1]).toBe(1);
 	});
 
-	it('resolves cleared tasks with null on clear(true)', async () => {
+	it('resolves cleared tasks with null on clear(true), without calling onSuccess', async () => {
 		const queue = new Chiqq({paused: true});
-		const batch = queue.addAll([() => 1, () => 2]);
+		let successes = 0;
+		const batch = queue.addAll([() => 1, () => 2], {onSuccess: () => successes++});
 		queue.clear(true);
+		expect(successes).toBe(0);
 		// Like add(), the type doesn't show the nulls from clear(true).
 		expect(await batch).toEqual([null, null] as unknown as number[]);
 	});
