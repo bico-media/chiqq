@@ -260,6 +260,10 @@ const MAX_DELAY = 2 ** 31 - 1;
 
 const noop = () => {};
 
+// For error messages: what the caller passed instead of a function.
+const kindOf = (value: unknown) =>
+	value === null ? 'null' : Array.isArray(value) ? 'an array' : typeof value;
+
 const DEFAULTS: ResolvedConfig = {taskDelay: 0, retryMax: 0, retryCooling: 50, retryFactor: 0};
 
 function toNumber(value: unknown, fallback: number): number {
@@ -505,8 +509,15 @@ export class Chiqq {
 		tasks: readonly (() => T | Promise<T>)[],
 		options?: BatchOptions<T>
 	): Promise<(T | undefined)[]> {
-		for (const task of tasks) {
-			if (typeof task !== 'function') throw new Error('Please pass a function');
+		if (!Array.isArray(tasks)) {
+			throw new TypeError(`Chiqq addAll() takes an array of functions, got ${kindOf(tasks)}`);
+		}
+		for (let i = 0; i < tasks.length; i++) {
+			if (typeof tasks[i] !== 'function') {
+				throw new TypeError(
+					`Chiqq addAll() takes an array of functions, got ${kindOf(tasks[i])} at index ${i}`
+				);
+			}
 		}
 		const conf = this.taskConf(options);
 		const n = tasks.length;
@@ -543,7 +554,9 @@ export class Chiqq {
 		options: TaskOptions | undefined,
 		first: boolean
 	): Promise<T> {
-		if (typeof task !== 'function') throw new Error('Please pass a function');
+		if (typeof task !== 'function') {
+			throw new TypeError(`Chiqq takes a task as a function, got ${kindOf(task)}`);
+		}
 		const conf = this.taskConf(options);
 		const promise = new Promise<T>(capture);
 		const item = new QueueItem<T>(

@@ -70,7 +70,9 @@ describe('Chiqq Basic Functionality', () => {
 
 		expect(() => {
 			queue.add('not a function' as any);
-		}).toThrow('Please pass a function');
+		}).toThrow(new TypeError('Chiqq takes a task as a function, got string'));
+		expect(() => queue.addNext(null as any)).toThrow('got null');
+		expect(() => queue.add(123 as any)).toThrow('got number');
 	});
 
 	it('should handle task failures', async () => {

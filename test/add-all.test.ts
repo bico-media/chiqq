@@ -44,7 +44,10 @@ describe('addAll()', () => {
 	it('throws before adding anything if a task is not a function', () => {
 		const queue = new Chiqq({paused: true});
 		const tasks = [() => 1, 'nope' as unknown as () => number];
-		expect(() => queue.addAll(tasks)).toThrow('Please pass a function');
+		expect(() => queue.addAll(tasks)).toThrow(
+			new TypeError('Chiqq addAll() takes an array of functions, got string at index 1')
+		);
+		expect(() => queue.addAll((() => 1) as any)).toThrow('got function');
 		expect(queue.queued).toBe(0);
 	});
 

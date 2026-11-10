@@ -231,7 +231,7 @@ The returned promise may also resolve with `null` if the task was discarded via 
 
 If a slot is free, the task starts synchronously inside `add()`, before `add()` returns.
 
-`add()` throws right away (it does not return a rejected promise) if `task` is not a function.
+`add()` throws a `TypeError` right away (it does not return a rejected promise) if `task` is not a function.
 
 ### `addNext<T>(task, options?) => Promise<T>`
 
@@ -250,7 +250,7 @@ Adds an array of tasks and returns one promise that resolves with their results,
 
 Without `onError`, the batch rejects with the first final error, like `Promise.all()`, and `clear()` rejects it with a `ChiqqClearedError`. The other tasks keep running. With `clear(true)`, cleared tasks give `null` at their positions, and `onSuccess` is not called for them. The queue-level `onError()` handler still hears about every failure. A callback that throws doesn't stall the queue: the error is rethrown on its own, like a throwing `onError()` handler.
 
-With `addAsFirst: true`, the batch goes to the front of the queue and keeps its own order there. `addAll()` throws right away, before adding anything, if one of the tasks is not a function.
+With `addAsFirst: true`, the batch goes to the front of the queue and keeps its own order there. `addAll()` throws a `TypeError` right away, before adding anything, if one of the tasks is not a function.
 
 ### `pause(callback?)`
 
