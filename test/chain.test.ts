@@ -46,6 +46,28 @@ describe('Chiqq.chain() - 2 queues', () => {
 		expect(returned).toBe(b);
 		expect(b.status().isPaused).toBe(false);
 	});
+
+	it('holds the chained queue right away when the upstream is already busy', async () => {
+		const a = new Chiqq();
+		const b = new Chiqq();
+		const order: string[] = [];
+		const pa = a.add(makeTask(order, 'a1', 10));
+		a.chain(b);
+		expect(b.isPaused).toBe(true);
+		const pb = b.add(makeTask(order, 'b1', 1));
+		await Promise.all([pa, pb]);
+		expect(order).toEqual(['a1', 'b1']);
+	});
+
+	it('holds the chained queue right away when the upstream is paused', async () => {
+		const a = new Chiqq({paused: true});
+		const b = new Chiqq();
+		a.chain(b);
+		expect(b.isPaused).toBe(true);
+		a.resume();
+		expect(b.isPaused).toBe(false);
+		expect(await b.add(() => 'runs')).toBe('runs');
+	});
 });
 
 describe('Chiqq.chain() - 3 queues', () => {

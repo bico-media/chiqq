@@ -609,6 +609,9 @@ export class Chiqq {
 			if (link === this) throw new Error('Chiqq chain would create a cycle');
 		}
 		this.chained = queue;
+		// Hold the follower right away if this queue already has work, or is
+		// paused or held itself, just as if the work had arrived after linking.
+		if (this.running || this.q.length || this.paused || this.held) queue.hold();
 		return queue;
 	}
 
