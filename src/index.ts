@@ -1,4 +1,4 @@
-export interface Configuration {
+export interface ChiqqOptions {
 	concurrency?: number;
 	taskDelay?: number;
 	paused?: boolean;
@@ -7,7 +7,7 @@ export interface Configuration {
 	retryFactor?: number;
 }
 
-export interface ConfigTask {
+export interface TaskOptions {
 	taskDelay?: number;
 	retryMax?: number;
 	retryCooling?: number;
@@ -15,7 +15,7 @@ export interface ConfigTask {
 	addAsFirst?: boolean;
 }
 
-export interface ConfigBatch<T = unknown> extends ConfigTask {
+export interface BatchOptions<T = unknown> extends TaskOptions {
 	/** Called each time a task of the batch succeeds, with its position in the array. */
 	onSuccess?: (value: T, index: number) => void;
 	/**
@@ -25,6 +25,13 @@ export interface ConfigBatch<T = unknown> extends ConfigTask {
 	 */
 	onError?: (error: unknown, index: number) => void;
 }
+
+/** @deprecated Renamed to `ChiqqOptions` in 3.0.0. */
+export type Configuration = ChiqqOptions;
+/** @deprecated Renamed to `TaskOptions` in 3.0.0. */
+export type ConfigTask = TaskOptions;
+/** @deprecated Renamed to `BatchOptions` in 3.0.0. */
+export type ConfigBatch<T = unknown> = BatchOptions<T>;
 
 interface ResolvedConfig {
 	taskDelay: number;
@@ -44,7 +51,7 @@ class Batch {
 	onSuccess: ((value: unknown, index: number) => void) | undefined;
 	onError: ((error: unknown, index: number) => void) | undefined;
 
-	constructor(n: number, conf: ConfigBatch | undefined) {
+	constructor(n: number, conf: BatchOptions | undefined) {
 		this.results = new Array(n);
 		this.left = n;
 		this.onSuccess = conf?.onSuccess;
@@ -267,7 +274,7 @@ function toConcurrency(value: unknown): number {
 	return Math.max(1, Math.floor(toNumber(value, 1)));
 }
 
-function resolveConfig(conf: ConfigTask, base: ResolvedConfig): ResolvedConfig {
+function resolveConfig(conf: TaskOptions, base: ResolvedConfig): ResolvedConfig {
 	const retryMax = Math.floor(toNumber(conf.retryMax, base.retryMax));
 	return {
 		taskDelay: toDelay(toNumber(conf.taskDelay, base.taskDelay)),
@@ -278,7 +285,7 @@ function resolveConfig(conf: ConfigTask, base: ResolvedConfig): ResolvedConfig {
 	};
 }
 
-const hasOverrides = (conf: ConfigTask) =>
+const hasOverrides = (conf: TaskOptions) =>
 	conf.taskDelay !== undefined ||
 	conf.retryMax !== undefined ||
 	conf.retryCooling !== undefined ||
@@ -303,7 +310,7 @@ export class Chiqq {
 	private timed: boolean;
 	private delayTimer: ReturnType<typeof setTimeout> | null;
 
-	constructor(conf: Configuration = {}) {
+	constructor(conf: ChiqqOptions = {}) {
 		this.conf = resolveConfig(conf, DEFAULTS);
 		this.limit = toConcurrency(conf.concurrency);
 		this.paused = !!conf.paused;
@@ -464,8 +471,8 @@ export class Chiqq {
 		this.tick();
 	}
 
-	add<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T> {
-		return this.enqueue(task, configObj, !!configObj?.addAsFirst);
+	add<T = unknown>(task: () => T | Promise<T>, options?: TaskOptions): Promise<T> {
+		return this.enqueue(task, options, !!options?.addAsFirst);
 	}
 
 	/**
@@ -473,8 +480,8 @@ export class Chiqq {
 	 * available, ahead of any tasks added before it. Same as `add()` with
 	 * `addAsFirst: true`.
 	 */
-	addNext<T = unknown>(task: () => T | Promise<T>, configObj?: ConfigTask): Promise<T> {
-		return this.enqueue(task, configObj, true);
+	addNext<T = unknown>(task: () => T | Promise<T>, options?: TaskOptions): Promise<T> {
+		return this.enqueue(task, options, true);
 	}
 
 	/**
@@ -488,24 +495,24 @@ export class Chiqq {
 	 */
 	addAll<T = unknown>(
 		tasks: readonly (() => T | Promise<T>)[],
-		configObj: ConfigBatch<T> & {onError: (error: unknown, index: number) => void}
+		options: BatchOptions<T> & {onError: (error: unknown, index: number) => void}
 	): Promise<(T | undefined)[]>;
 	addAll<T = unknown>(
 		tasks: readonly (() => T | Promise<T>)[],
-		configObj?: ConfigBatch<T>
+		options?: BatchOptions<T>
 	): Promise<T[]>;
 	addAll<T = unknown>(
 		tasks: readonly (() => T | Promise<T>)[],
-		configObj?: ConfigBatch<T>
+		options?: BatchOptions<T>
 	): Promise<(T | undefined)[]> {
 		for (const task of tasks) {
 			if (typeof task !== 'function') throw new Error('Please pass a function');
 		}
-		const conf = this.taskConf(configObj);
+		const conf = this.taskConf(options);
 		const n = tasks.length;
-		const batch = new Batch(n, configObj as ConfigBatch | undefined);
+		const batch = new Batch(n, options as BatchOptions | undefined);
 		if (n === 0) batch.resolve([]);
-		const first = !!configObj?.addAsFirst;
+		const first = !!options?.addAsFirst;
 		// With addAsFirst, add from the back so the batch keeps its order at the front.
 		for (let k = 0; k < n; k++) {
 			const i = first ? n - 1 - k : k;
@@ -520,9 +527,8 @@ export class Chiqq {
 		return batch.promise as Promise<T[]>;
 	}
 
-	private taskConf(configObj: ConfigTask | undefined): ResolvedConfig {
-		const conf =
-			configObj && hasOverrides(configObj) ? resolveConfig(configObj, this.conf) : this.conf;
+	private taskConf(options: TaskOptions | undefined): ResolvedConfig {
+		const conf = options && hasOverrides(options) ? resolveConfig(options, this.conf) : this.conf;
 		if (conf.taskDelay && !this.timed) {
 			// First task with a delay on this queue: earlier starts were not recorded,
 			// so space it from now if something is running.
@@ -534,11 +540,11 @@ export class Chiqq {
 
 	private enqueue<T>(
 		task: () => T | Promise<T>,
-		configObj: ConfigTask | undefined,
+		options: TaskOptions | undefined,
 		first: boolean
 	): Promise<T> {
 		if (typeof task !== 'function') throw new Error('Please pass a function');
-		const conf = this.taskConf(configObj);
+		const conf = this.taskConf(options);
 		const promise = new Promise<T>(capture);
 		const item = new QueueItem<T>(
 			task,

@@ -1,5 +1,12 @@
 import {describe, expect, it} from 'bun:test';
-import Chiqq, {type ConfigTask, type Configuration} from '../src/index';
+import Chiqq, {
+	type BatchOptions,
+	type ChiqqOptions,
+	type ConfigBatch,
+	type ConfigTask,
+	type Configuration,
+	type TaskOptions,
+} from '../src/index';
 
 describe('Chiqq TypeScript Features', () => {
 	it('should support generic return types', async () => {
@@ -48,13 +55,13 @@ describe('Chiqq TypeScript Features', () => {
 	});
 
 	it('should export proper TypeScript interfaces', () => {
-		const config: Configuration = {
+		const config: ChiqqOptions = {
 			concurrency: 3,
 			taskDelay: 100,
 			retryMax: 2,
 		};
 
-		const taskConfig: ConfigTask = {
+		const taskConfig: TaskOptions = {
 			addAsFirst: true,
 			taskDelay: 50,
 		};
@@ -66,10 +73,19 @@ describe('Chiqq TypeScript Features', () => {
 		expect(status.config.taskDelay).toBe(100);
 		expect(status.config.retry.max).toBe(2);
 
-		// Exercise the ConfigTask shape so the variable isn't unused
+		// Exercise the TaskOptions shape so the variable isn't unused
 		// and so the per-task type-checks at the call site.
 		expect(taskConfig.addAsFirst).toBe(true);
 		expect(taskConfig.taskDelay).toBe(50);
+	});
+
+	it('keeps the 2.x type names as aliases', () => {
+		const options: Configuration = {concurrency: 2} satisfies ChiqqOptions;
+		const task: ConfigTask = {retryMax: 1} satisfies TaskOptions;
+		const batch: ConfigBatch<number> = {onSuccess: v => v} satisfies BatchOptions<number>;
+		expect(new Chiqq(options).concurrency).toBe(2);
+		expect(task.retryMax).toBe(1);
+		expect(typeof batch.onSuccess).toBe('function');
 	});
 
 	it('should maintain type safety with mixed return types', async () => {

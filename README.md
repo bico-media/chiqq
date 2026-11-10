@@ -98,9 +98,9 @@ When `retryFactor <= 1` the cooldown is constant. Fractional factors like `1.5` 
 `add()` is generic, so you get fully typed return values without casting.
 
 ```typescript
-import Chiqq, { Configuration, ConfigTask } from 'chiqq';
+import Chiqq, { ChiqqOptions, TaskOptions } from 'chiqq';
 
-const config: Configuration = {
+const config: ChiqqOptions = {
 	concurrency: 3,
 	retryMax: 2,
 	retryCooling: 1000,
@@ -221,11 +221,11 @@ Key behaviours:
 | retryCooling  | number  | 50      | Base delay before retrying failed tasks (ms) |
 | retryFactor   | number  | 0       | Exponential growth factor (`<=1` means constant cooldown) |
 
-### `add<T>(task, configObj?) => Promise<T>`
+### `add<T>(task, options?) => Promise<T>`
 
 Adds a task to the queue. Returns a promise that resolves with the task's result.
 
-`configObj` (`ConfigTask`) accepts: `taskDelay`, `retryMax`, `retryCooling`, `retryFactor`, `addAsFirst`. Each overrides the queue-level setting for this task only, and is validated the same way as the queue config.
+`options` (`TaskOptions`) accepts: `taskDelay`, `retryMax`, `retryCooling`, `retryFactor`, `addAsFirst`. Each overrides the queue-level setting for this task only, and is validated the same way as the queue config.
 
 The returned promise may also resolve with `null` if the task was discarded via `clear(true)`.
 
@@ -233,15 +233,15 @@ If a slot is free, the task starts synchronously inside `add()`, before `add()` 
 
 `add()` throws right away (it does not return a rejected promise) if `task` is not a function.
 
-### `addNext<T>(task, configObj?) => Promise<T>`
+### `addNext<T>(task, options?) => Promise<T>`
 
 Thin proxy over `add()` with `addAsFirst: true`. The task is placed at the front of the queue and runs as soon as a slot is free, ahead of anything queued before it.
 
-### `addAll<T>(tasks, configObj?) => Promise<T[]>`
+### `addAll<T>(tasks, options?) => Promise<T[]>`
 
 Adds an array of tasks and returns one promise that resolves with their results, in the same order as `tasks`. Cheaper than calling `add()` for each task, and every task still retries on its own.
 
-`configObj` (`ConfigBatch`) takes the same options as `add()`, applied to every task of the batch, plus:
+`options` (`BatchOptions`) takes the same options as `add()`, applied to every task of the batch, plus:
 
 | Property  | Type                              | Description |
 | ---       | ---                               | --- |
