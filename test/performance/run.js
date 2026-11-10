@@ -326,7 +326,10 @@ function measureCase(rt, lib, sc, procs) {
 function libVersion(lib) {
 	if (lib.startsWith('chiqq-')) return 'variant';
 	if (lib === 'chiqq') {
-		return `${JSON.parse(readFileSync(join(here, '../../package.json'), 'utf8')).version} (src)`;
+		// The source of the working tree, which is usually ahead of the released version.
+		const git = (...args) => spawnSync('git', args, {cwd: here, encoding: 'utf8'}).stdout.trim();
+		const commit = git('rev-parse', '--short', 'HEAD') || 'unknown commit';
+		return `src at ${commit}${git('status', '--porcelain', '--', '../../src') ? ' with changes' : ''}`;
 	}
 	const pkg = {'promise-pool': '@supercharge/promise-pool'}[lib] || lib;
 	return JSON.parse(readFileSync(join(here, 'node_modules', pkg, 'package.json'), 'utf8')).version;
