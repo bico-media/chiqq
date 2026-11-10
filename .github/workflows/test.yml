@@ -2,9 +2,8 @@ name: Test
 
 on:
   push:
-    branches: '**'
+    branches: [main]
   pull_request:
-    branches: '**'
 
 permissions: read-all
 
@@ -21,11 +20,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Check formatting
+        run: bun run test-format
+
       - name: Typecheck
         run: bun run typecheck
 
       - name: Run test suite
         run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Check package types with attw
+        run: bun run test-types
 
   dist:
     name: Build and consume on Node ${{ matrix.node-version }}
