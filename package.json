@@ -4,6 +4,12 @@
 	"description": "Bulk load your async tasks to queue them with concurrency control and retry logic",
 	"author": "Mathias Wulff",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bico-media/chiqq.git"
+	},
+	"homepage": "https://github.com/bico-media/chiqq#readme",
+	"bugs": "https://github.com/bico-media/chiqq/issues",
 	"type": "module",
 	"main": "dist/chiqq.cjs",
 	"module": "dist/chiqq.js",
