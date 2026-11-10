@@ -60,3 +60,6 @@ jobs:
 
       - name: Import as ESM and require as CJS
         run: bun run test-dist
+
+      - name: Guard against slowdowns
+        run: bun run test-perf-guard

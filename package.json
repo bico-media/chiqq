@@ -47,10 +47,11 @@
 		"test": "bun test",
 		"test-dist": "node test/dist/esm.mjs && node test/dist/cjs.cjs",
 		"test-types": "attw --pack .",
+		"test-perf-guard": "node test/performance/guard.js",
 		"typecheck": "tsc -p .",
 		"release": "yarn version",
-		"preversion": "git diff-index --quiet HEAD -- || (echo 'Please commit all files or stash them' && exit 1) && bun install --frozen-lockfile && yarn typecheck && yarn test && npm login",
-		"version": "yarn build && yarn test-dist && git add dist types",
+		"preversion": "(test \"$(git branch --show-current)\" = main || (echo 'A release is made from main' && exit 1)) && (git diff-index --quiet HEAD -- || (echo 'Please commit all files or stash them' && exit 1)) && bun install --frozen-lockfile && yarn test-format && yarn typecheck && yarn test && npm login",
+		"version": "yarn build && yarn test-dist && yarn test-types && yarn test-perf-guard && git add dist types",
 		"prepublishOnly": "yarn build",
 		"postversion": "npm publish && git push && git push --tags && echo \"Successfully released version $npm_package_version\""
 	},
