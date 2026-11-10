@@ -1,12 +1,14 @@
 # Chiqq
 
-Chiqq is an async task pool and queue manager built for high throughput with first-class TypeScript support. It was originally developed as an internal tool at Bico.Media to manage the flow of creating and distributing files as transactions. We're open-sourcing it because it's proven to be incredibly useful for turning chaotic asynchronous jobs into a calm, controlled process.
+> A small queue for async tasks. Chiqq runs your tasks with a limit on how many run at once, retries the ones that fail, and lets you pause, clear and chain queues. No dependencies, written in TypeScript.
 
-It's small (about 9 kB, no dependencies) and fast: see [Performance](#performance) for how it compares to p-queue, p-limit, fastq and friends.
+Chiqq started as an internal tool at Bico.Media, where it keeps the creation and distribution of files as transactions at a steady pace. It turned out to be handy for any pile of async jobs that should not all start at once, so here it is.
+
+It is 12.7 kB as shipped, or about 2.5 kB minified and gzipped. The overhead per task is low, see [Performance](#performance).
 
 ## Installation
 
-Chiqq is available on npm with zero dependencies. It runs on Node 18+, Bun, Deno and in the browser.
+Chiqq runs on Node 18+, Bun, Deno and in the browser.
 
 ```bash
 bun add chiqq
@@ -26,7 +28,7 @@ import Chiqq from 'npm:chiqq';        // Deno
 
 ## Examples
 
-The best way to understand Chiqq is to see it in action. Let's say you have a massive list of URLs for API calls to process. You can't start them all at once or you'll overwhelm your system. With Chiqq you can pretend you're processing them all at once while controlling concurrency and retry behaviour.
+Say you have a long list of URLs to call. Starting all the requests at once would overload the API, or your own machine. With Chiqq you add them all, and it starts a few at a time.
 
 ```typescript
 import Chiqq from 'chiqq';
@@ -54,13 +56,13 @@ const results = await Promise.all(promises);
 console.log(`Processed ${results.length} API calls`);
 ```
 
-In this example you queue up 1000s of requests but only up to 8 will run at any time. If a request fails, Chiqq will retry it up to 3 times with a 5 second cooldown.
+All 1000 requests are added right away, but at most 8 run at the same time. A request that fails is retried up to 3 times, with 5 seconds in between.
 
 Chiqq retries when your task throws (or its promise rejects), so you decide what counts as a failure. That's why the example throws on a bad status code: `fetch()` only rejects on network errors, and a `500` would otherwise count as a success.
 
 ### A whole batch at once
 
-If you have the tasks up front and only need the results at the end, hand them over with `addAll()`. You get one promise for the batch instead of one per task, which is less work for Chiqq. Every task still retries on its own.
+If you have all the tasks up front, you can hand them over with `addAll()`. You get one promise for the batch instead of one per task, which is less work for Chiqq. Every task still retries on its own.
 
 ```typescript
 let done = 0;
@@ -79,7 +81,7 @@ Without `onError`, the batch rejects with the first error that survives its retr
 
 ## Retry Logic
 
-Chiqq can automatically retry failed tasks with configurable cooling and exponential backoff.
+A failed task can be retried after a cooldown, and the cooldown can grow with each attempt.
 
 ```typescript
 import Chiqq from 'chiqq';
@@ -95,7 +97,7 @@ When `retryFactor <= 1` the cooldown is constant. Fractional factors like `1.5` 
 
 ## TypeScript Support
 
-`add()` is generic, so you get fully typed return values without casting.
+TypeScript infers the result type from your task, so there is nothing to cast.
 
 ```typescript
 import Chiqq, { ChiqqOptions, TaskOptions } from 'chiqq';
@@ -108,14 +110,14 @@ const config: ChiqqOptions = {
 
 const queue = new Chiqq(config);
 
-const greeting = await queue.add<string>(async () => 'Hello, TypeScript!');
+const greeting = await queue.add(async () => 'Hello, TypeScript!');
 //    ^? string
 
-const score = await queue.add<number>(async () => Math.floor(Math.random() * 100));
+const score = await queue.add(() => Math.floor(Math.random() * 100));
 //    ^? number
 
-interface UserData { id: number; name: string; }
-const user = await queue.add<UserData>(async () => ({ id: 1, name: 'John Doe' }));
+const user = await queue.add(() => fetchUser(1));
+//    ^? whatever fetchUser() resolves to
 
 // Per-task overrides
 await queue.add(async () => doWork(), { retryCooling: 500 });
@@ -182,7 +184,7 @@ While a handler is set, Chiqq marks its rejected promises as handled, so they ca
 
 ## Priority Chains
 
-`chain()` links a lower-priority follower queue, letting you compose several queues into one longer prioritised pipeline. A queue holds its chained queue paused while it has work, and resumes it once it goes idle - so everything in the upstream queue finishes before the downstream queue gets a turn.
+`chain()` links a lower-priority queue behind another one. A queue holds its chained queue paused while it has work, and resumes it once it goes idle. So everything in the upstream queue finishes before the downstream queue gets a turn.
 
 ```typescript
 const high = new Chiqq({ concurrency: 4 });
@@ -202,7 +204,7 @@ a.chain(b).chain(c).chain(d); // priority order: a -> b -> c -> d
 ```
 
 Key behaviours:
-- When work arrives in an upstream queue, it holds all downstream queues. In-flight tasks will finish in the downstream queues. Notice how concurrency is maintained within each queue and NOT across all queues.
+- When work arrives in an upstream queue, it holds all downstream queues. The same happens when you link to a queue that is already busy or paused. Tasks already running in the downstream queues finish. Note that concurrency counts within each queue, not across all of them.
 - Retries don't block the chain: a task waiting out its retry cooldown does not hold the chain - the downstream runs during the gap and is held again when the retry fires.
 - Signals flow downward, so resuming the top of the chain flows down to the first queue with tasks. Resuming a middle queue starts its tasks or passes the resume on as if it was the top of the chain.
 - A chain hold is separate from your own `pause()`: a downstream queue you paused yourself stays paused (and keeps its pause callback) when the upstream drains.
@@ -239,7 +241,7 @@ Thin proxy over `add()` with `addAsFirst: true`. The task is placed at the front
 
 ### `addAll<T>(tasks, options?) => Promise<T[]>`
 
-Adds an array of tasks and returns one promise that resolves with their results, in the same order as `tasks`. Cheaper than calling `add()` for each task, and every task still retries on its own.
+Adds an array of tasks and returns one promise that resolves with their results, in the same order as `tasks`. It costs less than calling `add()` for each task, and every task still retries on its own.
 
 `options` (`BatchOptions`) takes the same options as `add()`, applied to every task of the batch, plus:
 
@@ -321,9 +323,11 @@ q.status();
 
 ## Performance
 
-Chiqq is intentionally tiny and unopinionated. Adding and starting a task is O(1), also for queues with hundreds of thousands of tasks, and so is `addNext()`. It keeps less memory per waiting task than any of the other libraries we could measure.
+tl;dr: Chiqq adds about 0.15 µs per task, the least of the queue libraries we measured - but - it rarely matters. A task that makes an HTTP call takes milliseconds, so the queue overhead disappears in the noise with any of these libraries.
 
-We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno. Here are the Node 24 numbers. The fastest library in each row is 1.00x, and the others show how long they took compared to it, so 2.00x took twice as long:
+Adding and starting a task takes the same time with 10 or 100,000 tasks waiting, and so does `addNext()`.
+
+We compare it with p-queue, p-limit, fastq, async, Bottleneck and promise-pool on Node, Bun and Deno. These are the Node 24 numbers. The fastest library in each row is 1.00x, and the others show how long they took compared to it, so 2.00x took twice as long:
 
 | Scenario | chiqq | p-queue | p-limit | fastq | async | promise-pool |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -336,11 +340,9 @@ We benchmark it against p-queue, p-limit, fastq, async, Bottleneck and promise-p
 
 Chiqq's own times for those rows were 1.53, 1.58, 3.07, 2.59 and 30 ms.
 
-Chiqq comes out fastest in every scenario on all three runtimes. The closest is fastq, which took 1.17x-1.27x the time of Chiqq on Node. Bottleneck is left out of the table: it's built for rate limiting rather than raw throughput, and spent about 2.8 ms per task in these tests, so it isn't a fair fight.
+Chiqq had the lowest time in every row, on all three runtimes. The closest is fastq, at 1.17x-1.27x on Node. Some of fastq's runs vary by more than that gap (up to ±144% on Deno), so in those rows it is fair to call it a tie. Bottleneck is left out of the table: it is made for rate limiting, not for throughput, and spent about 2.8 ms per task in these tests.
 
-All of those rows call `add()` once per task. Handing the same tasks over with `addAll()` is cheaper still: on Node the sync rows took about 0.49x the time of `add()`, the async and I/O rows 0.84x-0.86x, and the 100k backlog 0.41x.
-
-Also keep in mind that these numbers measure the queue itself. As soon as your tasks do real work (an HTTP call takes milliseconds, not microseconds), the queue overhead disappears in the noise for all of these libraries.
+All of those rows call `add()` once per task. With `addAll()` the same tasks took 0.49x the time of `add()` in the sync rows on Node, 0.84x-0.86x in the async and I/O rows, and 0.41x for the 100k backlog.
 
 The full results for all three runtimes, with timings and how much they vary between runs, are in [`test/performance/results.md`](test/performance/results.md). Run `test/performance/run.sh` to reproduce them on your own machine.
 
@@ -356,12 +358,25 @@ For I/O-bound work (HTTP, disk, DB), try concurrency between 5 and 50. Ramp up w
 
 In-flight tasks finish; only new picks are blocked. This is useful for graceful shutdown: call `pause()`, wait for in-flight work via `pause(callback)`, then exit (or `clear()` the rest). Adding tasks while paused queues them normally; they start when you call `resume()`.
 
+## Not included
+
+Chiqq does not try to do everything. These are left out on purpose:
+
+- Deciding per error whether to retry (like `shouldRetry` in p-retry). Chiqq retries everything a task throws. Catch the errors you don't want retried inside the task, and return them as a value.
+- Random jitter on the retry cooldown.
+- Cancelling a task that is already running, or a timeout per task. Pass an `AbortSignal`, for example `AbortSignal.timeout(5000)`, to the work inside your task.
+- Rate limits like "100 per minute". `taskDelay` spaces task starts, which covers the simple cases. For more, look at Bottleneck.
+- Priorities within one queue. Use `addNext()` for one task, or `chain()` for a whole lower-priority queue.
+
 ## Tests
 
 ```bash
 bun test                    # test suite, one file per feature in test/
 bun run typecheck           # types for src and tests
-bun run build && bun run test-dist   # import/require the built files with Node
+bun run build               # then:
+bun run test-dist           #   import and require the built files with Node
+bun run test-types          #   check the package types with attw
+bun run test-perf-guard     #   fail if large queues got much slower
 test/performance/run.sh     # compare with similar libs, writes test/performance/results.md
 ```
 
@@ -371,7 +386,7 @@ test/performance/run.sh     # compare with similar libs, writes test/performance
 yarn release
 ```
 
-Runs `yarn version`: checks for a clean tree, installs, typechecks, tests and logs in to npm, then builds `dist` and `types` into the version commit, publishes to npm, and pushes the commit and tag.
+Runs `yarn version` from `main`. It checks for a clean tree, installs, checks formatting, typechecks, tests and logs in to npm. Then it builds `dist` and `types`, checks them with `test-dist`, `test-types` and `test-perf-guard`, and adds them to the version commit. Last, it publishes to npm, and pushes the commit and tag.
 
 ## Contributing
 
