@@ -407,15 +407,16 @@ export class Chiqq {
 		return true;
 	}
 
-	// Runs a task without an async function, with the same timing as
-	// `await payload.task()`: a throw is handled right away, a promise gets one
-	// .then(), and a plain value is wrapped up on the next microtask.
+	// Runs a task without an async function. A promise gets one .then(). A plain
+	// value or a throw is wrapped up on the next microtask. Handling a throw right
+	// away would start the next task from inside this one, and a long run of
+	// throwing tasks would overflow the stack.
 	private run(payload: QueueItem) {
 		let result: unknown;
 		try {
 			result = payload.task();
 		} catch (e) {
-			this.settle(payload, false, e);
+			queueMicrotask(() => this.settle(payload, false, e));
 			return;
 		}
 		let thenable: boolean;

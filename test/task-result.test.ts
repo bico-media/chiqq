@@ -24,15 +24,16 @@ describe('Task results', () => {
 		expect(order).toEqual(['a', 'b']);
 	});
 
-	it('handles a synchronous throw inside add()', async () => {
+	it('wraps up a synchronous throw on the next microtask, like a plain value', async () => {
 		const queue = new Chiqq({concurrency: 1});
 		const failed = queue.add(() => {
 			throw new Error('sync');
 		});
-		// The slot is already free again, and the error is already decided.
-		expect(queue.active).toBe(0);
-		expect(queue.isIdle).toBe(true);
+		// The task has run, but its slot is only freed after this code is done.
+		expect(queue.active).toBe(1);
+		expect(queue.isIdle).toBe(false);
 		await expect(failed).rejects.toThrow('sync');
+		expect(queue.isIdle).toBe(true);
 	});
 
 	it('adopts a non-native thenable', async () => {

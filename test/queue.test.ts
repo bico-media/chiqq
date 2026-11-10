@@ -80,6 +80,26 @@ describe('Internal task queue', () => {
 		expect(order[99_999]).toBe(0);
 	});
 
+	it('runs 100k tasks that throw synchronously without overflowing the stack', async () => {
+		const queue = new Chiqq({paused: true});
+		let failed = 0;
+		const promises: Promise<unknown>[] = [];
+		for (let i = 0; i < 100_000; i++) {
+			promises.push(
+				queue
+					.add(() => {
+						throw new Error('x');
+					})
+					.catch(() => failed++)
+			);
+		}
+		// Used to throw RangeError: Maximum call stack size exceeded, here or later.
+		queue.resume();
+		await Promise.all(promises);
+		expect(failed).toBe(100_000);
+		expect(queue.isIdle).toBe(true);
+	});
+
 	it('drains 200k queued tasks in linear time', async () => {
 		const queue = new Chiqq({concurrency: 16});
 		const start = performance.now();
