@@ -111,3 +111,45 @@ describe('onError()', () => {
 		expect(r.out.split('\n').sort()).toEqual(['next', 'uncaught handler']);
 	});
 });
+
+describe('Throwing callbacks', () => {
+	it('reports a throwing pause() callback on an idle queue as an uncaught error', () => {
+		const r = runScript(`
+			process.on('uncaughtException', e => console.log('uncaught ' + e.message));
+			process.on('unhandledRejection', e => console.log('unhandled ' + e.message));
+			const q = new Chiqq();
+			q.pause(() => { throw new Error('pause'); });
+			q.resume();
+			q.add(() => 'next').then(v => console.log(v));
+		`);
+		expect(r.out.split('\n').sort()).toEqual(['next', 'uncaught pause']);
+	});
+
+	it('a throwing pause() callback does not stall the queue', () => {
+		const r = runScript(`
+			process.on('uncaughtException', e => console.log('uncaught ' + e.message));
+			const q = new Chiqq();
+			q.add(() => new Promise(r => setTimeout(r, 5)));
+			q.pause(() => { throw new Error('pause'); });
+			setTimeout(() => {
+				q.resume();
+				q.add(() => 'next').then(v => console.log(v));
+			}, 20);
+		`);
+		expect(r.out.split('\n').sort()).toEqual(['next', 'uncaught pause']);
+	});
+
+	it('a throwing onComplete() callback still resolves onIdle() and releases the chain', () => {
+		const r = runScript(`
+			process.on('uncaughtException', e => console.log('uncaught ' + e.message));
+			const a = new Chiqq();
+			const b = new Chiqq();
+			a.chain(b);
+			a.onComplete(() => { throw new Error('complete'); });
+			a.add(() => new Promise(r => setTimeout(r, 5)));
+			b.add(() => 'chained').then(v => console.log(v));
+			a.onIdle().then(() => console.log('idle'));
+		`);
+		expect(r.out.split('\n').sort()).toEqual(['chained', 'idle', 'uncaught complete']);
+	});
+});

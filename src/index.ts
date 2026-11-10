@@ -356,13 +356,13 @@ export class Chiqq {
 		if (this.pauseCallback && this.paused && this.running === 0) {
 			const cb = this.pauseCallback;
 			this.pauseCallback = null;
-			cb();
+			callSafe(cb, undefined, undefined);
 		}
 		if (this.isDrained()) {
 			if (this.completeCallback) {
 				const cb = this.completeCallback;
 				this.completeCallback = null;
-				cb();
+				callSafe(cb, undefined, undefined);
 			}
 			if (this.idleWaiters.length) {
 				const waiters = this.idleWaiters;
@@ -564,7 +564,9 @@ export class Chiqq {
 		// If already idle, fire on a microtask so behavior is consistent.
 		if (callback && this.running === 0) {
 			this.pauseCallback = null;
-			Promise.resolve().then(callback);
+			// queueMicrotask, not a promise: a throw is reported like one from
+			// any other callback, instead of as an unhandled rejection.
+			queueMicrotask(callback);
 		}
 	}
 
