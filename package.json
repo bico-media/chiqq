@@ -13,7 +13,7 @@
 	"type": "module",
 	"main": "dist/chiqq.cjs",
 	"module": "dist/chiqq.js",
-	"types": "types/index.d.ts",
+	"types": "types/index.d.cts",
 	"exports": {
 		".": {
 			"import": {
@@ -40,12 +40,13 @@
 		"build": "rm -rf dist types && bun run build-esm && bun run build-cjs && bun run build-types",
 		"build-esm": "bun build src/index.ts --outfile dist/chiqq.js --format esm && rexreplace '^( {2})+' \"'\\\\t'.repeat(€0.length / 2)\" -jq dist/chiqq.js",
 		"build-cjs": "cp dist/chiqq.js dist/chiqq.cjs && rexreplace '^export \\{[^}]*\\};?' 'module.exports = Object.assign(Chiqq, {default: Chiqq, Chiqq, ChiqqClearedError});' -q dist/chiqq.cjs",
-		"build-types": "tsc -p tsconfig.build.json && cp types/index.d.ts types/index.d.cts",
+		"build-types": "tsc -p tsconfig.build.json && node tools/cts-types.js",
 		"dev": "bun --watch src/index.ts",
 		"format": "biome format --write",
 		"test-format": "biome format",
 		"test": "bun test",
 		"test-dist": "node test/dist/esm.mjs && node test/dist/cjs.cjs",
+		"test-types": "attw --pack .",
 		"typecheck": "tsc -p .",
 		"release": "yarn version",
 		"preversion": "git diff-index --quiet HEAD -- || (echo 'Please commit all files or stash them' && exit 1) && bun install --frozen-lockfile && yarn typecheck && yarn test && npm login",
@@ -60,6 +61,7 @@
 		"retry"
 	],
 	"devDependencies": {
+		"@arethetypeswrong/cli": "0.18.5",
 		"@biomejs/biome": "^2.3.4",
 		"bun-types": "1.4.4",
 		"rexreplace": "7.1.15",
